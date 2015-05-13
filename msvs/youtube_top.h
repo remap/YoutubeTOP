@@ -94,7 +94,7 @@ private:
 	void* frameData_ = nullptr;
 	bool isFrameUpdated_;
 	int startTimeSec_, endTimeSec_;
-	bool needAdjustStartTime_;
+	bool needAdjustStartTimeHandover_, needAdjustStartTimeActive_;
 
 	unsigned texture_;
 

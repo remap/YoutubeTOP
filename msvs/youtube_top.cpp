@@ -225,7 +225,9 @@ status_(Status::None),
 handoverStatus_(HandoverStatus::NoHandover), 
 parameters_({ "", false, false, false, false, 0., 0., false, false, 0., false, 0., false, 0.}), 
 activeController_(streamControllers_.getFirst()),
-handoverController_(streamControllers_.getSecond())
+handoverController_(streamControllers_.getSecond()),
+needAdjustStartTimeActive_(false),
+needAdjustStartTimeHandover_(false)
 {
 	myExecuteCount = 0;
 }
@@ -263,7 +265,7 @@ YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 		format->width = (int)activeControllerStatus_.videoInfo_.width_;
 		format->height = (int)activeControllerStatus_.videoInfo_.height_;
 		format->aspectX = (float)activeControllerStatus_.videoInfo_.width_;
-		format->aspectX = (float)activeControllerStatus_.videoInfo_.height_;
+		format->aspectY = (float)activeControllerStatus_.videoInfo_.height_;
 		
 		if (status_ == None)
 		{
@@ -271,23 +273,25 @@ YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 			status_ = ReadyToRun;
 		}
 
-		if (startTimeSec_ && startTimeSec_ < activeControllerStatus_.videoInfo_.totalTime_)
+		if (needAdjustStartTimeActive_ &&
+			startTimeSec_ < activeControllerStatus_.videoInfo_.totalTime_)
 		{
-			float seekPos = (float)startTimeSec_ * 1000 / (float)activeControllerStatus_.videoInfo_.totalTime_;
+			float seekPos = (float)startTimeSec_ / (float)activeControllerStatus_.videoInfo_.totalTime_;
 			activeController_->seek(seekPos);
 		}
+
+		needAdjustStartTimeActive_ = false;
 	}
 
 	if (handoverControllerStatus_.isVideoInfoReady_)
 	{
 		handoverController_->pause(true);
 
-		if (needAdjustStartTime_ && 
-			startTimeSec_ && startTimeSec_ < handoverControllerStatus_.videoInfo_.totalTime_)
+		if (needAdjustStartTimeHandover_ && 
+			startTimeSec_ < handoverControllerStatus_.videoInfo_.totalTime_)
 		{
-			needAdjustStartTime_ = false;
-
-			float seekPos = (float)startTimeSec_*1000 / (float)handoverControllerStatus_.videoInfo_.totalTime_;
+			needAdjustStartTimeHandover_ = false;
+			float seekPos = (float)startTimeSec_ / (float)handoverControllerStatus_.videoInfo_.totalTime_;
 			handoverController_->seek(seekPos);
 		}
 
@@ -302,7 +306,7 @@ YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 				format->width = (int)handoverControllerStatus_.videoInfo_.width_;
 				format->height = (int)handoverControllerStatus_.videoInfo_.height_;
 				format->aspectX = (float)handoverControllerStatus_.videoInfo_.width_;
-				format->aspectX = (float)handoverControllerStatus_.videoInfo_.height_;
+				format->aspectY = (float)handoverControllerStatus_.videoInfo_.height_;
 			}
 		}
 	}
@@ -321,6 +325,18 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 	bool needLoad = false;
 
 	needLoad = (parameters_.currentUrl_ != activeControllerStatus_.videoUrl_) && (parameters_.currentUrl_ != handoverControllerStatus_.videoUrl_);
+
+	if (parameters_.isNewStartTime_)
+	{
+		parameters_.isNewStartTime_ = false;
+		startTimeSec_ = 0;
+
+		{
+			startTimeSec_ = (int)parameters_.lastStartTimeSec_ * 1000;
+			needAdjustStartTimeActive_ = (startTimeSec_ > activeControllerStatus_.videoInfo_.currentTime_);
+			needAdjustStartTimeHandover_ = true;
+		}
+	}
 
 	if (needLoad)
 	{
@@ -367,18 +383,6 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 		{
 			activeController_->pause(parameters_.isPaused_);
 
-			if (parameters_.isNewStartTime_)
-			{
-				parameters_.isNewStartTime_ = false;
-				startTimeSec_ = 0;
-
-				if (parameters_.lastStartTimeSec_ != 0)
-				{
-					needAdjustStartTime_ = true;
-					startTimeSec_ = (int)parameters_.lastStartTimeSec_;
-				}
-			}
-
 			if (parameters_.isNewSeekValue_)
 			{
 				parameters_.isNewSeekValue_ = false;
@@ -404,7 +408,7 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 					if (parameters_.isLooping_)
 					{
 						performTransition();
-						needAdjustStartTime_ = true;
+						needAdjustStartTimeHandover_ = true;
 						activeController_->pause(parameters_.isPaused_);
 					}
 				}
