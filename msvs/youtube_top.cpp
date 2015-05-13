@@ -242,7 +242,7 @@ YouTubeTOP::getGeneralInfo(TOP_GeneralInfo *ginfo)
 {
 	// Uncomment this line if you want the TOP to cook every frame even
 	// if none of it's inputs/parameters are changing.
-	ginfo->cookEveryFrame = true;
+	ginfo->cookEveryFrame = (status_ == Running);
 	activeControllerStatus_ = activeController_->getStatus();
 	handoverControllerStatus_ = handoverController_->getStatus();
 
@@ -404,7 +404,6 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				{
 				case libvlc_Ended:
 				{
-					status_ = ReadyToRun;
 					if (parameters_.isLooping_)
 					{
 						performTransition();
@@ -659,7 +658,6 @@ YouTubeTOP::renderBlackFrame()
 void
 YouTubeTOP::performTransition()
 {
-	status_ = ReadyToRun;
 	parameters_.switchCue_ = false;
 	handoverStatus_ = HandoverStatus::NoHandover;
 	activeController_->stop();
