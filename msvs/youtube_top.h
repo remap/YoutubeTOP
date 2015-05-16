@@ -19,6 +19,7 @@
 //	Author: Peter Gusev, peter@remap.ucla.edu
 
 #include <mutex>
+#include <chrono>
 
 #include "TOP_CPlusPlusBase.h"
 #include "stream_controller.h"
@@ -90,11 +91,13 @@ private:
 	// this instance of the class (like its name).
 	const TOP_NodeInfo		*myNodeInfo;
 	
+	FILE* logFile_;
 	std::mutex frameBufferAcces_;
 	void* frameData_ = nullptr;
 	bool isFrameUpdated_;
 	int startTimeSec_, endTimeSec_;
 	bool needAdjustStartTimeHandover_, needAdjustStartTimeActive_;
+	bool activeInfoStaled_, handoverInfoStaled_;
 
 	unsigned texture_;
 
@@ -149,6 +152,9 @@ private:
 
 	void performTransition();
 	void swapControllers();
+
+	FILE* initLogFile();
+	void log(const char *fmt, ...);
 
 	static std::string getStatusString(Status status);
 	static std::string getHandoverStatusString(HandoverStatus status);

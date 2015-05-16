@@ -27,6 +27,9 @@
 #include <algorithm>
 #include <map>
 #include <gl/gl.h>
+#include <sstream>
+#include <fstream>
+#include <chrono>
 
 using namespace vlc;
 using namespace std::placeholders;
@@ -144,6 +147,7 @@ inline bool getFloatValue(const TOP_InputArrays* arrays, TouchInputName inputNam
 inline bool updateFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &updated, float &value);
 inline bool getStringValue(const TOP_InputArrays* arrays, TouchInputName inputName, std::string &value);
 inline bool getBoolValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &value);
+bool fileExist(const char *fileName);
 
 // These functions are basic C function, which the DLL loader can find
 // much easier than finding a C++ Class.
@@ -227,9 +231,12 @@ parameters_({ "", false, false, false, false, 0., 0., false, false, 0., false, 0
 activeController_(streamControllers_.getFirst()),
 handoverController_(streamControllers_.getSecond()),
 needAdjustStartTimeActive_(false),
-needAdjustStartTimeHandover_(false)
+needAdjustStartTimeHandover_(false),
+activeInfoStaled_(false),
+handoverInfoStaled_(false)
 {
 	myExecuteCount = 0;
+	logFile_ = initLogFile();
 }
 
 YouTubeTOP::~YouTubeTOP()
@@ -262,53 +269,81 @@ YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 	// In this example we'll return false and use the TOP's settings
 	if (activeControllerStatus_.isVideoInfoReady_)
 	{
+		if (!activeInfoStaled_)
+		{
+			log("active video info ready");
+
+			activeInfoStaled_ = true;
+
+			if (status_ == None)
+			{
+				log("status None. creating texture for active");
+
+				initTexture();
+				status_ = ReadyToRun;
+			}
+		}
+
 		format->width = (int)activeControllerStatus_.videoInfo_.width_;
 		format->height = (int)activeControllerStatus_.videoInfo_.height_;
 		format->aspectX = (float)activeControllerStatus_.videoInfo_.width_;
 		format->aspectY = (float)activeControllerStatus_.videoInfo_.height_;
-		
-		if (status_ == None)
-		{
-			initTexture();
-			status_ = ReadyToRun;
-		}
+	}
 
-		if (needAdjustStartTimeActive_ &&
-			startTimeSec_ < activeControllerStatus_.videoInfo_.totalTime_)
+	if (needAdjustStartTimeActive_ &&
+		activeControllerStatus_.isVideoInfoReady_)
+	{
+		if (startTimeSec_ < activeControllerStatus_.videoInfo_.totalTime_)
 		{
+			log("seek active. buffer %.2f", activeControllerStatus_.videoInfo_.bufferLevel_);
+
 			float seekPos = (float)startTimeSec_ / (float)activeControllerStatus_.videoInfo_.totalTime_;
 			activeController_->seek(seekPos);
 		}
+		else
+			log("startTime (%d) exceeds video length (%d). ignore seeking for active", startTimeSec_, activeControllerStatus_.videoInfo_.totalTime_);
 
 		needAdjustStartTimeActive_ = false;
 	}
 
-	if (handoverControllerStatus_.isVideoInfoReady_)
+
+	if (handoverControllerStatus_.isVideoInfoReady_ &&
+		!handoverInfoStaled_)
 	{
+		log("handover video info ready. pausing");
+
+		handoverInfoStaled_ = true;
 		handoverController_->pause(true);
+	}
 
-		if (needAdjustStartTimeHandover_ && 
-			startTimeSec_ < handoverControllerStatus_.videoInfo_.totalTime_)
+	bool adjustedHandover = false;
+
+	if (needAdjustStartTimeHandover_ &&
+		handoverControllerStatus_.isVideoInfoReady_)
+	{
+		if (startTimeSec_ < handoverControllerStatus_.videoInfo_.totalTime_)
 		{
-			needAdjustStartTimeHandover_ = false;
 			float seekPos = (float)startTimeSec_ / (float)handoverControllerStatus_.videoInfo_.totalTime_;
-			handoverController_->seek(seekPos);
-		}
 
-		if (handoverStatus_ == HandoverStatus::Initiated &&
-			handoverControllerStatus_.videoInfo_.bufferLevel_ >= 90)
-		{
-			handoverStatus_ = HandoverStatus::Ready;
-			// updated format info with new video info
-			if (!parameters_.seamlessModeOn_ ||
-				parameters_.seamlessModeOn_ && parameters_.switchCue_)
-			{
-				format->width = (int)handoverControllerStatus_.videoInfo_.width_;
-				format->height = (int)handoverControllerStatus_.videoInfo_.height_;
-				format->aspectX = (float)handoverControllerStatus_.videoInfo_.width_;
-				format->aspectY = (float)handoverControllerStatus_.videoInfo_.height_;
-			}
+			log("seek handover to %.2f. buffr %.2f", seekPos, handoverControllerStatus_.videoInfo_.bufferLevel_);
+
+			handoverController_->seek(seekPos);
+			adjustedHandover = true;
 		}
+		else
+			log("startTime (%d) exceeds video length (%d). ignore seeking for handover", startTimeSec_, handoverControllerStatus_.videoInfo_.totalTime_);
+
+		needAdjustStartTimeHandover_ = false;
+	}
+
+
+	if (handoverStatus_ == HandoverStatus::Initiated &&
+		handoverControllerStatus_.videoInfo_.bufferLevel_ >= 90 &&
+		!adjustedHandover)
+	{
+		log("finishing up handover. buffer %.2f", handoverControllerStatus_.videoInfo_.bufferLevel_);
+
+		handoverStatus_ = HandoverStatus::Ready;
 	}
 
 	return true;
@@ -335,6 +370,8 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 			startTimeSec_ = (int)parameters_.lastStartTimeSec_ * 1000;
 			needAdjustStartTimeActive_ = (startTimeSec_ > activeControllerStatus_.videoInfo_.currentTime_);
 			needAdjustStartTimeHandover_ = true;
+
+			log("new start time %d adjust active %d adjust handover %d", startTimeSec_, needAdjustStartTimeActive_, needAdjustStartTimeHandover_);
 		}
 	}
 
@@ -348,6 +385,8 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 			activeController_->stop();
 			handoverController_->stop();
 			renderBlackFrame();
+
+			log("empty url - rendering black frame");
 		}
 		else
 		{
@@ -358,6 +397,9 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				{
 					handoverStatus_ = Initiated;
 					handoverController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), handoverController_);
+					handoverInfoStaled_ = false;
+
+					log("initiated handover for URL %s", parameters_.currentUrl_.c_str());
 				}
 			}
 			else
@@ -366,7 +408,16 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				isFrameUpdated_ = false;
 				activeController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), activeController_);
 				handoverController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), handoverController_);
+				needAdjustStartTimeActive_ = (startTimeSec_ != 0);
+				activeInfoStaled_ = false;
+				handoverInfoStaled_ = false;
+
+				log("initiated playback for active and handover: %s", parameters_.currentUrl_.c_str());
 			}
+			
+			needAdjustStartTimeHandover_ = (startTimeSec_ != 0);
+
+			log("need adjust active: %d handover %d", needAdjustStartTimeActive_, needAdjustStartTimeHandover_);
 		}
 	}
 	else
@@ -376,7 +427,11 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 
 		if (handoverStatus_ == Ready && canSwitch)
 		{
+			log("handover ready. switching...");
+
 			performTransition();
+			handoverInfoStaled_ = false;
+			needAdjustStartTimeHandover_ = true;
 		}
 
 		if (status_ > None)
@@ -406,9 +461,19 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				{
 					if (parameters_.isLooping_)
 					{
-						performTransition();
-						needAdjustStartTimeHandover_ = true;
-						activeController_->pause(parameters_.isPaused_);
+						log("active ended");
+
+						if (handoverControllerStatus_.isVideoInfoReady_)
+						{
+							log("performing transition...");
+
+							performTransition();
+							handoverInfoStaled_ = false;
+							needAdjustStartTimeHandover_ = true;
+							activeController_->pause(parameters_.isPaused_);
+						}
+						else
+							log("ooops! handover is not ready. postponing...");
 					}
 				}
 					break;
@@ -598,6 +663,8 @@ YouTubeTOP::onFrameRendering(const void* frameData, const void* userData)
 	{
 		if (status_ == Running)
 		{
+			//log("copy frame");
+
 			ScopedLock lock(frameBufferAcces_);
 			memcpy(frameData_, frameData, activeControllerStatus_.videoInfo_.frameSize_);
 			isFrameUpdated_ = true;
@@ -611,18 +678,30 @@ YouTubeTOP::initTexture()
 	ScopedLock lock(frameBufferAcces_);
 
 	if (frameData_)
+	{
+		log("deallocating texture data");
+
 		free(frameData_);
+	}
 
 	frameData_ = malloc(activeControllerStatus_.videoInfo_.frameSize_);
+	memset(frameData_, 0, activeControllerStatus_.videoInfo_.frameSize_);
+
+	log("new texture allocated - %d bytes (%dX%d)", activeControllerStatus_.videoInfo_.frameSize_, 
+		activeControllerStatus_.videoInfo_.width_, activeControllerStatus_.videoInfo_.height_);
 
 	if (glIsTexture(texture_))
 	{
+		log("delete texture");
+
 		glDeleteTextures(1, (const GLuint*)&texture_);
 		GetError();
 		texture_ = 0;
 	}
 
+	log("creating new texture (%dX%d)...", activeControllerStatus_.videoInfo_.width_, activeControllerStatus_.videoInfo_.height_);
 	texture_ = createVideoTexture(activeControllerStatus_.videoInfo_.width_, activeControllerStatus_.videoInfo_.height_, frameData_);
+	log("new texture created");
 }
 
 void
@@ -658,11 +737,18 @@ YouTubeTOP::renderBlackFrame()
 void
 YouTubeTOP::performTransition()
 {
+	int oldWidth = activeControllerStatus_.videoInfo_.width_;
+	int oldHeight = activeControllerStatus_.videoInfo_.height_;
+
 	parameters_.switchCue_ = false;
 	handoverStatus_ = HandoverStatus::NoHandover;
 	activeController_->stop();
 	swapControllers();
-	initTexture();
+
+	if (activeControllerStatus_.videoInfo_.width_ != oldWidth ||
+		activeControllerStatus_.videoInfo_.height_ != oldHeight)
+		initTexture();
+
 	// set spare controller to prebuffer current video
 	handoverController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), handoverController_);
 }
@@ -685,7 +771,47 @@ YouTubeTOP::swapControllers()
 	handoverControllerStatus_ = handoverController_->getStatus();
 }
 
+FILE*
+YouTubeTOP::initLogFile()
+{
+	std::string fileName = "youtubeTop";
+	int id = 0;
+	std::stringstream ss;
+
+	do{
+		id++;
+		ss.str("");
+		ss << fileName << id << ".log";
+	} while (fileExist(ss.str().c_str()));
+
+	return fopen(ss.str().c_str(), "w+");
+}
+
+void 
+YouTubeTOP::log(const char *fmt, ...)
+{
+	FILE* outStream = logFile_;
+	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+	std::chrono::duration<double> seconds = now.time_since_epoch();
+
+	va_list args;
+	va_start(args, fmt);
+
+	fprintf(outStream, "%f\t", seconds);
+	vfprintf(outStream, fmt, args);
+	va_end(args);
+	fprintf(outStream, "\n");
+	fflush(outStream);
+}
+
+//********************************************************************************
 #pragma mark - functions
+bool fileExist(const char *fileName)
+{
+	std::ifstream infile(fileName);
+	return infile.good();
+}
+
 int
 createVideoTexture(unsigned width, unsigned height, void *frameBuffer)
 {
