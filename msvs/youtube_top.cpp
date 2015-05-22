@@ -750,7 +750,7 @@ YouTubeTOP::onFrameRendering(const void* frameData, const void* userData)
 {
 	if (userData == activeController_)
 	{
-		if (status_ == Running)
+		if (status_ == Running && frameData_)
 		{
 			//log("copy frame");
 			ScopedLock lock(frameBufferAcces_);
@@ -861,9 +861,12 @@ YouTubeTOP::updateParameters(const TOP_InputArrays* arrays)
 void
 YouTubeTOP::renderBlackFrame()
 {
-	ScopedLock lock(frameBufferAcces_);
-	memset(frameData_, 0, activeControllerStatus_.videoInfo_.frameSize_);
-	renderTexture(texture_, activeControllerStatus_.videoInfo_.width_, activeControllerStatus_.videoInfo_.height_, frameData_);
+	if (frameData_)
+	{
+		ScopedLock lock(frameBufferAcces_);
+		memset(frameData_, 0, activeControllerStatus_.videoInfo_.frameSize_);
+		renderTexture(texture_, activeControllerStatus_.videoInfo_.width_, activeControllerStatus_.videoInfo_.height_, frameData_);
+	}
 }
 
 void
