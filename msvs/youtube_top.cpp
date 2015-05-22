@@ -74,7 +74,9 @@ enum class InfoDatIndex {
 	PlaybackSpeed,
 	StarTimeSec,
 	EndTimeSec,
-	Blackout
+	Blackout,
+	Thumbnail,
+	ThumbnailOn
 };
 
 /**
@@ -100,7 +102,9 @@ static std::map<InfoDatIndex, std::string> RowNames = {
 		{ InfoDatIndex::PlaybackSpeed, "playbackSpeed" },
 		{ InfoDatIndex::StarTimeSec, "startTime" },
 		{ InfoDatIndex::EndTimeSec, "endTime" },
-		{ InfoDatIndex::Blackout, "blackout" }
+		{ InfoDatIndex::Blackout, "blackout" },
+		{ InfoDatIndex::Thumbnail, "thumbnail" },
+		{ InfoDatIndex::ThumbnailOn, "thumbnailOn" }
 };
 
 /**
@@ -117,7 +121,9 @@ enum class TouchInputName {
 	PlaybackSpeed,
 	StartTime,
 	EndTime,
-	Blackout
+	Blackout,
+	Thumbnail,
+	ThumbnailOn
 };
 
 struct TouchInput {
@@ -138,7 +144,9 @@ struct TouchInput {
 		 { TouchInputName::SwitchCue, { "value3", 3, 1 } },
 		 { TouchInputName::PlaybackSpeed, { "value4", 4, 0 } },
 		 { TouchInputName::StartTime, { "value5", 5, 0 } },
-		 { TouchInputName::EndTime, { "value5", 5, 1 } }
+		 { TouchInputName::EndTime, { "value5", 5, 1 } },
+		 { TouchInputName::Thumbnail, { "string1", 1, 0 } },
+		 { TouchInputName::ThumbnailOn, { "value6", 6, 0 } }
 };
 
 int createVideoTexture(unsigned width, unsigned height, void *frameBuffer);
@@ -227,13 +235,16 @@ myNodeInfo(info),
 videoFormatReady_(false),
 status_(Status::None), 
 handoverStatus_(HandoverStatus::NoHandover), 
-parameters_({ "", false, false, false, false, 0., 0., false, false, 0., false, 0., false, 0.}), 
+parameters_({ "", "", false, false, false, false, 0., 0., false, false, 0., false, 0., false, 0., false}), 
 activeController_(streamControllers_.getFirst()),
 handoverController_(streamControllers_.getSecond()),
+thumbnailController_(new vlc::StreamController("thumbnail")),
 needAdjustStartTimeActive_(false),
 needAdjustStartTimeHandover_(false),
 activeInfoStaled_(false),
-handoverInfoStaled_(false)
+handoverInfoStaled_(false),
+cookNextFrames_(0),
+thumbnailReady_(false)
 {
 	myExecuteCount = 0;
 	logFile_ = initLogFile();
@@ -247,11 +258,13 @@ YouTubeTOP::~YouTubeTOP()
 void
 YouTubeTOP::getGeneralInfo(TOP_GeneralInfo *ginfo)
 {
+	//log("getGeneralInfo()");
 	// Uncomment this line if you want the TOP to cook every frame even
 	// if none of it's inputs/parameters are changing.
-	ginfo->cookEveryFrame = (status_ == Running);
+	ginfo->cookEveryFrame = !parameters_.isPaused_ && !thumbnailReady_;
 	activeControllerStatus_ = activeController_->getStatus();
 	handoverControllerStatus_ = handoverController_->getStatus();
+	thumbnailControllerStatus_ = thumbnailController_->getStatus();
 
 	if (status_ > None)
 	{
@@ -262,88 +275,112 @@ YouTubeTOP::getGeneralInfo(TOP_GeneralInfo *ginfo)
 bool
 YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 {
+	//log("getOutputFormat()");
 	// In this function we could assign variable values to 'format' to specify
 	// the pixel format/resolution etc that we want to output to.
 	// If we did that, we'd want to return true to tell the TOP to use the settings we've
 	// specified.
 	// In this example we'll return false and use the TOP's settings
-	if (activeControllerStatus_.isVideoInfoReady_)
+
 	{
-		if (!activeInfoStaled_)
+		if (activeControllerStatus_.isVideoInfoReady_)
 		{
-			log("active video info ready");
-
-			activeInfoStaled_ = true;
-
-			if (status_ == None)
+			if (!activeInfoStaled_)
 			{
-				log("status None. creating texture for active");
+				log("active video info ready");
 
-				initTexture();
-				status_ = ReadyToRun;
+				activeInfoStaled_ = true;
+
+				if (status_ == None)
+				{
+					log("status None. creating texture for active");
+
+					initTexture();
+					status_ = ReadyToRun;
+				}
 			}
+
+			format->width = (int)activeControllerStatus_.videoInfo_.width_;
+			format->height = (int)activeControllerStatus_.videoInfo_.height_;
+			format->aspectX = (float)activeControllerStatus_.videoInfo_.width_;
+			format->aspectY = (float)activeControllerStatus_.videoInfo_.height_;
 		}
 
-		format->width = (int)activeControllerStatus_.videoInfo_.width_;
-		format->height = (int)activeControllerStatus_.videoInfo_.height_;
-		format->aspectX = (float)activeControllerStatus_.videoInfo_.width_;
-		format->aspectY = (float)activeControllerStatus_.videoInfo_.height_;
-	}
-
-	if (needAdjustStartTimeActive_ &&
-		activeControllerStatus_.isVideoInfoReady_)
-	{
-		if (startTimeSec_ < activeControllerStatus_.videoInfo_.totalTime_)
+		if (needAdjustStartTimeActive_ &&
+			activeControllerStatus_.isVideoInfoReady_)
 		{
-			log("seek active. buffer %.2f", activeControllerStatus_.videoInfo_.bufferLevel_);
+			if (startTimeSec_ < activeControllerStatus_.videoInfo_.totalTime_)
+			{
+				log("seek active. buffer %.2f", activeControllerStatus_.videoInfo_.bufferLevel_);
 
-			float seekPos = (float)startTimeSec_ / (float)activeControllerStatus_.videoInfo_.totalTime_;
-			activeController_->seek(seekPos);
+				float seekPos = (float)startTimeSec_ / (float)activeControllerStatus_.videoInfo_.totalTime_;
+				activeController_->seek(seekPos);
+			}
+			else
+				log("startTime (%d) exceeds video length (%d). ignore seeking for active", startTimeSec_, activeControllerStatus_.videoInfo_.totalTime_);
+
+			needAdjustStartTimeActive_ = false;
 		}
-		else
-			log("startTime (%d) exceeds video length (%d). ignore seeking for active", startTimeSec_, activeControllerStatus_.videoInfo_.totalTime_);
-
-		needAdjustStartTimeActive_ = false;
-	}
 
 
-	if (handoverControllerStatus_.isVideoInfoReady_ &&
-		!handoverInfoStaled_)
-	{
-		log("handover video info ready. pausing");
-
-		handoverInfoStaled_ = true;
-		handoverController_->pause(true);
-	}
-
-	bool adjustedHandover = false;
-
-	if (needAdjustStartTimeHandover_ &&
-		handoverControllerStatus_.isVideoInfoReady_)
-	{
-		if (startTimeSec_ < handoverControllerStatus_.videoInfo_.totalTime_)
+		if (handoverControllerStatus_.isVideoInfoReady_ &&
+			!handoverInfoStaled_)
 		{
-			float seekPos = (float)startTimeSec_ / (float)handoverControllerStatus_.videoInfo_.totalTime_;
+			log("handover video info ready. pausing");
 
-			log("seek handover to %.2f. buffr %.2f", seekPos, handoverControllerStatus_.videoInfo_.bufferLevel_);
-
-			handoverController_->seek(seekPos);
-			adjustedHandover = true;
+			handoverInfoStaled_ = true;
+			handoverController_->pause(true);
 		}
-		else
-			log("startTime (%d) exceeds video length (%d). ignore seeking for handover", startTimeSec_, handoverControllerStatus_.videoInfo_.totalTime_);
 
-		needAdjustStartTimeHandover_ = false;
+		bool adjustedHandover = false;
+
+		if (needAdjustStartTimeHandover_ &&
+			handoverControllerStatus_.isVideoInfoReady_)
+		{
+			if (startTimeSec_ < handoverControllerStatus_.videoInfo_.totalTime_)
+			{
+				float seekPos = (float)startTimeSec_ / (float)handoverControllerStatus_.videoInfo_.totalTime_;
+
+				log("seek handover to %.2f. buffr %.2f", seekPos, handoverControllerStatus_.videoInfo_.bufferLevel_);
+
+				handoverController_->seek(seekPos);
+				adjustedHandover = true;
+			}
+			else
+				log("startTime (%d) exceeds video length (%d). ignore seeking for handover", startTimeSec_, handoverControllerStatus_.videoInfo_.totalTime_);
+
+			needAdjustStartTimeHandover_ = false;
+		}
+
+
+		if (handoverStatus_ == HandoverStatus::Initiated &&
+			handoverControllerStatus_.videoInfo_.bufferLevel_ >= 90 &&
+			!adjustedHandover)
+		{
+			log("finishing up handover. buffer %.2f", handoverControllerStatus_.videoInfo_.bufferLevel_);
+
+			handoverStatus_ = HandoverStatus::Ready;
+		}
+	}
+	
+	// if thumbnail is on, set format
+	if (thumbnailControllerStatus_.isVideoInfoReady_ &&
+		parameters_.thumbnailOn_ &&
+		!thumbnailReady_)
+	{
+		status_ = Running;
+		activeController_->pause(true);
+		initThumbnailTexture();
+
+		log("thumbnail info ready. swapped with active controller");
 	}
 
-
-	if (handoverStatus_ == HandoverStatus::Initiated &&
-		handoverControllerStatus_.videoInfo_.bufferLevel_ >= 90 &&
-		!adjustedHandover)
+	if (thumbnailReady_)
 	{
-		log("finishing up handover. buffer %.2f", handoverControllerStatus_.videoInfo_.bufferLevel_);
-
-		handoverStatus_ = HandoverStatus::Ready;
+		format->width = (int)thumbnailControllerStatus_.videoInfo_.width_;
+		format->height = (int)thumbnailControllerStatus_.videoInfo_.height_;
+		format->aspectX = (float)thumbnailControllerStatus_.videoInfo_.width_;
+		format->aspectY = (float)thumbnailControllerStatus_.videoInfo_.height_;
 	}
 
 	return true;
@@ -354,6 +391,7 @@ void
 YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputArrays* arrays, void* reserved)
 {
 	updateParameters(arrays);
+	//log("execute(). url %s", parameters_.currentUrl_.c_str());
 
 	myExecuteCount++;
 
@@ -365,13 +403,43 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 	{
 		parameters_.isNewStartTime_ = false;
 		startTimeSec_ = 0;
+		startTimeSec_ = (int)parameters_.lastStartTimeSec_ * 1000;
+		needAdjustStartTimeActive_ = (startTimeSec_ > activeControllerStatus_.videoInfo_.currentTime_) || !activeControllerStatus_.isVideoInfoReady_;
+		needAdjustStartTimeHandover_ = true;
 
+		log("new start time %d adjust active %d adjust handover %d", startTimeSec_, needAdjustStartTimeActive_, needAdjustStartTimeHandover_);
+	}
+
+	if (parameters_.thumbnailUrl_ != thumbnailController()->getStatus().videoUrl_)
+	{
+		if (parameters_.thumbnailUrl_ == "")
+			thumbnailController()->stop();
+		else
 		{
-			startTimeSec_ = (int)parameters_.lastStartTimeSec_ * 1000;
-			needAdjustStartTimeActive_ = (startTimeSec_ > activeControllerStatus_.videoInfo_.currentTime_);
-			needAdjustStartTimeHandover_ = true;
+			thumbnailController()->play(parameters_.thumbnailUrl_, std::bind(&YouTubeTOP::onThumbnailRendering, this, _1, _2), thumbnailController());
+			log("requested thumbnail - %s", parameters_.thumbnailUrl_.c_str());
+		}
+	}
 
-			log("new start time %d adjust active %d adjust handover %d", startTimeSec_, needAdjustStartTimeActive_, needAdjustStartTimeHandover_);
+	if (!parameters_.thumbnailOn_)
+	{
+		if (thumbnailReady_)
+		{
+			log("thumbnail disabled. swapping thumbnail and active controllers");
+
+			thumbnailReady_ = false;
+		}
+	}
+	else
+	{
+		if (!thumbnailReady_)
+		{
+			thumbnailController()->seek(0);
+			thumbnailController()->play();
+		}
+		else
+		{
+			thumbnailController()->pause(true);
 		}
 	}
 
@@ -411,6 +479,7 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				needAdjustStartTimeActive_ = (startTimeSec_ != 0);
 				activeInfoStaled_ = false;
 				handoverInfoStaled_ = false;
+				cookNextFrames_ = 5; // arbitrary number of frames for cooking TOP after setting new URL
 
 				log("initiated playback for active and handover: %s", parameters_.currentUrl_.c_str());
 			}
@@ -419,8 +488,10 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 
 			log("need adjust active: %d handover %d", needAdjustStartTimeActive_, needAdjustStartTimeHandover_);
 		}
+
+		return;
 	}
-	else
+	else if (!thumbnailReady_)
 	{
 		bool canSwitch = parameters_.seamlessModeOn_ || 
 						!parameters_.seamlessModeOn_ && parameters_.switchCue_;
@@ -498,7 +569,17 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				}
 			}
 		} // status > None
-	} // else needLoad
+	}
+	else
+	{
+		if (parameters_.blackout_)
+			renderBlackFrame();
+		else
+		{
+			ScopedLock lock(thumbnailBufferAcces_);
+			renderTexture(thumbnail_, thumbnailControllerStatus().videoInfo_.width_, thumbnailControllerStatus().videoInfo_.height_, thumbnailFrameData_);
+		}
+	}
 }
 
 int
@@ -627,6 +708,14 @@ YouTubeTOP::getInfoDATEntries(int index, int nEntries, TOP_InfoDATEntries *entri
 			sprintf(tempBuffer2, "%.0f", parameters_.lastEndTimeSec_);
 			break;
 
+		case InfoDatIndex::Thumbnail:
+			sprintf(tempBuffer2, "%s", parameters_.thumbnailUrl_.c_str());
+			break;
+
+		case InfoDatIndex::ThumbnailOn:
+			sprintf(tempBuffer2, "%d", parameters_.thumbnailOn_);
+			break;
+
 		default:
 			sprintf(tempBuffer2, "%s", "unknown");
 			break;
@@ -664,11 +753,21 @@ YouTubeTOP::onFrameRendering(const void* frameData, const void* userData)
 		if (status_ == Running)
 		{
 			//log("copy frame");
-
 			ScopedLock lock(frameBufferAcces_);
 			memcpy(frameData_, frameData, activeControllerStatus_.videoInfo_.frameSize_);
 			isFrameUpdated_ = true;
 		}
+	}
+}
+
+void 
+YouTubeTOP::onThumbnailRendering(const void* frameData, const void* userData)
+{
+	if (parameters_.thumbnailOn_ && thumbnail_)
+	{
+		ScopedLock lock(thumbnailBufferAcces_);
+		memcpy(thumbnailFrameData_, frameData, thumbnailControllerStatus().videoInfo_.frameSize_);
+		thumbnailReady_ = true;
 	}
 }
 
@@ -705,12 +804,45 @@ YouTubeTOP::initTexture()
 }
 
 void
+YouTubeTOP::initThumbnailTexture()
+{
+
+	if (thumbnailFrameData_)
+	{
+		log("deallocating thumbnail texture data");
+
+		free(thumbnailFrameData_);
+	}
+
+	thumbnailFrameData_ = malloc(thumbnailControllerStatus().videoInfo_.frameSize_);
+	memset(thumbnailFrameData_, 0, thumbnailControllerStatus().videoInfo_.frameSize_);
+
+	log("new thumbnail texture allocated - %d bytes (%dX%d)", thumbnailControllerStatus().videoInfo_.frameSize_,
+		thumbnailControllerStatus().videoInfo_.width_, thumbnailControllerStatus().videoInfo_.height_);
+
+	if (glIsTexture(thumbnail_))
+	{
+		log("delete thumbnail texture");
+
+		glDeleteTextures(1, (const GLuint*)&thumbnail_);
+		GetError();
+		thumbnail_ = 0;
+	}
+
+	log("creating new texture (%dX%d)...", thumbnailControllerStatus().videoInfo_.width_, thumbnailControllerStatus().videoInfo_.height_);
+	thumbnail_ = createVideoTexture(thumbnailControllerStatus().videoInfo_.width_, thumbnailControllerStatus().videoInfo_.height_, thumbnailFrameData_);
+	log("new texture created");
+}
+
+void
 YouTubeTOP::updateParameters(const TOP_InputArrays* arrays)
 {
 	getStringValue(arrays, TouchInputName::URL, parameters_.currentUrl_);
+	getStringValue(arrays, TouchInputName::Thumbnail, parameters_.thumbnailUrl_);
 	getBoolValue(arrays, TouchInputName::Pause, parameters_.isPaused_);
 	getBoolValue(arrays, TouchInputName::Loop, parameters_.isLooping_);
 	getBoolValue(arrays, TouchInputName::Blackout, parameters_.blackout_);
+	getBoolValue(arrays, TouchInputName::ThumbnailOn, parameters_.thumbnailOn_);
 	updateFloatValue(arrays, TouchInputName::SeekPosition, parameters_.isNewSeekValue_, parameters_.lastSeekPosition_);
 	updateFloatValue(arrays, TouchInputName::PlaybackSpeed, parameters_.isNewPlaybackSpeed_, parameters_.lastPlaybackSpeed_);
 	updateFloatValue(arrays, TouchInputName::StartTime, parameters_.isNewStartTime_, parameters_.lastStartTimeSec_);
@@ -769,6 +901,14 @@ YouTubeTOP::swapControllers()
 
 	activeControllerStatus_ = activeController_->getStatus();
 	handoverControllerStatus_ = handoverController_->getStatus();
+}
+
+void
+YouTubeTOP::swapControllers(vlc::StreamController** controller1, vlc::StreamController** controller2)
+{
+	void *tmp = *controller1;
+	*controller1 = *controller2;
+	*controller2 = (vlc::StreamController*)tmp;
 }
 
 FILE*
