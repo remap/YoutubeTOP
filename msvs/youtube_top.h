@@ -65,7 +65,7 @@ private:
 	} HandoverStatus;
 
 	typedef struct _Parameters {
-		std::string currentUrl_, thumbnailUrl_;
+		std::string currentUrl_;
 		bool isLooping_;
 		bool isPaused_;
 		bool isNewSeekValue_;
@@ -80,7 +80,6 @@ private:
 		float lastStartTimeSec_;
 		bool isNewEndTime_;
 		float lastEndTimeSec_;
-		bool thumbnailOn_;
 	} Parameters;
 
 	Status status_;
@@ -93,17 +92,14 @@ private:
 	const TOP_NodeInfo		*myNodeInfo;
 	
 	FILE* logFile_;
-	std::mutex frameBufferAcces_, thumbnailBufferAcces_;
+	std::mutex frameBufferAcces_;
 	void* frameData_ = nullptr;
-	void* thumbnailFrameData_ = nullptr;
 	bool isFrameUpdated_;
 	int startTimeSec_, endTimeSec_;
 	bool needAdjustStartTimeHandover_, needAdjustStartTimeActive_;
 	bool activeInfoStaled_, handoverInfoStaled_;
-	int cookNextFrames_;
-	bool thumbnailReady_;
 
-	unsigned texture_, thumbnail_;
+	unsigned texture_;
 
 	// In this example this value will be incremented each time the execute()
 	// function is called, then passes back to the TOP 
@@ -146,27 +142,16 @@ private:
 	vlc::StreamController::Status activeControllerStatus_;
 	vlc::StreamController* handoverController_;
 	vlc::StreamController::Status handoverControllerStatus_;
-	vlc::StreamController* thumbnailController_;
-	vlc::StreamController::Status thumbnailControllerStatus_;
 
 	bool videoFormatReady_;
 
 	void onFrameRendering(const void* frameData, const void* userData);
-	void onThumbnailRendering(const void* frameData, const void* userData);
 	void initTexture();
-	void initThumbnailTexture();
 	void updateParameters(const TOP_InputArrays* arrays);
 	void renderBlackFrame();
 
 	void performTransition();
 	void swapControllers();
-	void swapControllers(vlc::StreamController** controller1, vlc::StreamController** controller2);
-	vlc::StreamController* thumbnailController(){
-		return thumbnailController_; // (thumbnailReady_) ? thumbnailController_ : thumbnailController_;
-	}
-	vlc::StreamController::Status thumbnailControllerStatus(){
-		return thumbnailControllerStatus_; // (thumbnailReady_) ? activeControllerStatus_ : thumbnailControllerStatus_;
-	}
 
 	FILE* initLogFile();
 	void log(const char *fmt, ...);
