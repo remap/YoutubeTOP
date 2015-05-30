@@ -243,7 +243,7 @@ needAdjustStartTimeActive_(false),
 needAdjustStartTimeHandover_(false),
 activeInfoStaled_(false),
 handoverInfoStaled_(false),
-cookNextFrames_(0),
+cookNextFrames_(1),
 thumbnailReady_(false)
 {
 	myExecuteCount = 0;
@@ -258,10 +258,11 @@ YouTubeTOP::~YouTubeTOP()
 void
 YouTubeTOP::getGeneralInfo(TOP_GeneralInfo *ginfo)
 {
-	//log("getGeneralInfo()");
+	log("getGeneralInfo() cook next %d", cookNextFrames_);
 	// Uncomment this line if you want the TOP to cook every frame even
 	// if none of it's inputs/parameters are changing.
-	ginfo->cookEveryFrame = !parameters_.isPaused_ && !thumbnailReady_;
+	ginfo->cookEveryFrame = true; // cookNextFrames_ > 0; // !parameters_.isPaused_ && !thumbnailReady_;
+	ginfo->cookEveryFrameIfAsked = true;
 	activeControllerStatus_ = activeController_->getStatus();
 	handoverControllerStatus_ = handoverController_->getStatus();
 	thumbnailControllerStatus_ = thumbnailController_->getStatus();
@@ -270,12 +271,14 @@ YouTubeTOP::getGeneralInfo(TOP_GeneralInfo *ginfo)
 	{
 		ginfo->clearBuffers = false;
 	}
+
+	cookNextFrames_--;
 }
 
 bool
 YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 {
-	//log("getOutputFormat()");
+	log("getOutputFormat()");
 	// In this function we could assign variable values to 'format' to specify
 	// the pixel format/resolution etc that we want to output to.
 	// If we did that, we'd want to return true to tell the TOP to use the settings we've
@@ -391,7 +394,7 @@ void
 YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputArrays* arrays, void* reserved)
 {
 	updateParameters(arrays);
-	//log("execute(). url %s", parameters_.currentUrl_.c_str());
+	log("execute()");
 
 	myExecuteCount++;
 
@@ -436,10 +439,13 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 		{
 			thumbnailController()->seek(0);
 			thumbnailController()->play();
+			cookNextFrames_ = INT_MAX;
 		}
 		else
 		{
+			status_ = ReadyToRun;
 			thumbnailController()->pause(true);
+			cookNextFrames_ = 0;
 		}
 	}
 
@@ -453,6 +459,7 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 			activeController_->stop();
 			handoverController_->stop();
 			renderBlackFrame();
+			cookNextFrames_ = 0;
 
 			log("empty url - rendering black frame");
 		}
@@ -479,7 +486,7 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				needAdjustStartTimeActive_ = (startTimeSec_ != 0);
 				activeInfoStaled_ = false;
 				handoverInfoStaled_ = false;
-				cookNextFrames_ = 5; // arbitrary number of frames for cooking TOP after setting new URL
+				cookNextFrames_ = INT_MAX;
 
 				log("initiated playback for active and handover: %s", parameters_.currentUrl_.c_str());
 			}
@@ -491,7 +498,7 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 
 		return;
 	}
-	else if (!thumbnailReady_)
+	else if (!thumbnailReady_ && !parameters_.thumbnailOn_)
 	{
 		bool canSwitch = parameters_.seamlessModeOn_ || 
 						!parameters_.seamlessModeOn_ && parameters_.switchCue_;
@@ -523,11 +530,18 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 			}
 
 			status_ = (parameters_.isPaused_) ? ReadyToRun : Running;
+			cookNextFrames_ = (status_ == ReadyToRun) ? 0 : INT_MAX;
 
 			if (status_ == Running)
 			{
 				switch (activeControllerStatus_.state_)
 				{
+				case libvlc_Error:{
+					log("player has encountered error");
+					status_ = ReadyToRun;
+					cookNextFrames_ = 0;
+				}
+					break;
 				case libvlc_Ended:
 				{
 					if (parameters_.isLooping_)
@@ -569,15 +583,26 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				}
 			}
 		} // status > None
+		else
+		{
+			if (activeControllerStatus_.state_ == libvlc_Error)
+			{
+				log("player encountered error before URL was opened.");
+				cookNextFrames_ = 0;
+			}
+		}
 	}
 	else
 	{
-		if (parameters_.blackout_)
-			renderBlackFrame();
-		else
+		if (thumbnailReady_)
 		{
-			ScopedLock lock(thumbnailBufferAcces_);
-			renderTexture(thumbnail_, thumbnailControllerStatus().videoInfo_.width_, thumbnailControllerStatus().videoInfo_.height_, thumbnailFrameData_);
+			if (parameters_.blackout_)
+				renderBlackFrame();
+			else
+			{
+				ScopedLock lock(thumbnailBufferAcces_);
+				renderTexture(thumbnail_, thumbnailControllerStatus().videoInfo_.width_, thumbnailControllerStatus().videoInfo_.height_, thumbnailFrameData_);
+			}
 		}
 	}
 }
@@ -829,8 +854,8 @@ YouTubeTOP::initThumbnailTexture()
 		thumbnail_ = 0;
 	}
 
-	log("creating new texture (%dX%d)...", thumbnailControllerStatus().videoInfo_.width_, thumbnailControllerStatus().videoInfo_.height_);
-	thumbnail_ = createVideoTexture(thumbnailControllerStatus().videoInfo_.width_, thumbnailControllerStatus().videoInfo_.height_, thumbnailFrameData_);
+	log("creating new texture (%dX%d)...", thumbnailControllerStatus_.videoInfo_.width_, thumbnailControllerStatus_.videoInfo_.height_);
+	thumbnail_ = createVideoTexture(thumbnailControllerStatus_.videoInfo_.width_, thumbnailControllerStatus_.videoInfo_.height_, thumbnailFrameData_);
 	log("new texture created");
 }
 
