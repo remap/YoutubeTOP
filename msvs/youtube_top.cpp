@@ -258,7 +258,7 @@ YouTubeTOP::~YouTubeTOP()
 void
 YouTubeTOP::getGeneralInfo(TOP_GeneralInfo *ginfo)
 {
-	log("getGeneralInfo() cook next %d", cookNextFrames_);
+	//log("getGeneralInfo() cook next %d", cookNextFrames_);
 	// Uncomment this line if you want the TOP to cook every frame even
 	// if none of it's inputs/parameters are changing.
 	ginfo->cookEveryFrame = true; // cookNextFrames_ > 0; // !parameters_.isPaused_ && !thumbnailReady_;
@@ -278,7 +278,7 @@ YouTubeTOP::getGeneralInfo(TOP_GeneralInfo *ginfo)
 bool
 YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 {
-	log("getOutputFormat()");
+	//log("getOutputFormat()");
 	// In this function we could assign variable values to 'format' to specify
 	// the pixel format/resolution etc that we want to output to.
 	// If we did that, we'd want to return true to tell the TOP to use the settings we've
@@ -394,7 +394,7 @@ void
 YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputArrays* arrays, void* reserved)
 {
 	updateParameters(arrays);
-	log("execute()");
+	//log("execute()");
 
 	myExecuteCount++;
 

@@ -60,24 +60,24 @@ namespace vlc {
 		static chrono::duration<double> lastLogFlush(0);
 		void log(internal::StreamControllerPrivate* c, int level, const char *fmt, ...)
 		{
-			ScopedLock lock(c->logMutex_);
-			FILE* outStream = (c->logFile_) ? c->logFile_ : stdout;
-			chrono::system_clock::time_point now = chrono::system_clock::now();
-			chrono::duration<double> seconds = now.time_since_epoch();
+			//ScopedLock lock(c->logMutex_);
+			//FILE* outStream = (c->logFile_) ? c->logFile_ : stdout;
+			//chrono::system_clock::time_point now = chrono::system_clock::now();
+			//chrono::duration<double> seconds = now.time_since_epoch();
 
-			va_list args;
-			va_start(args, fmt);
+			//va_list args;
+			//va_start(args, fmt);
 
-			fprintf(outStream, "%f <%s> [%d]\t", seconds, c->name_.c_str(), level);
-			vfprintf(outStream, fmt, args);
-			va_end(args);
-			fprintf(outStream, "\n");
+			//fprintf(outStream, "%f <%s-%x> [%d]\t", seconds, c->name_.c_str(), c, level);
+			//vfprintf(outStream, fmt, args);
+			//va_end(args);
+			//fprintf(outStream, "\n");
 
-			if (seconds - lastLogFlush >= chrono::milliseconds(300))
-			{
-				fflush(outStream);
-				lastLogFlush = seconds;
-			}
+			//if (seconds - lastLogFlush >= chrono::milliseconds(300))
+			//{
+			//	fflush(outStream);
+			//	lastLogFlush = seconds;
+			//}
 		}
 
 		void vlcLogCallback(void *data, int level, const libvlc_log_t *ctx, const char *fmt, va_list args)
@@ -90,13 +90,13 @@ namespace vlc {
 				chrono::system_clock::time_point now = chrono::system_clock::now();
 				chrono::duration<double> seconds = now.time_since_epoch();
 
-				{
-					ScopedLock lock(c->logMutex_);
-					fprintf(outStream, "%f <%s-vlc> [%d]\t", seconds, c->name_.c_str(), level);
-					vfprintf(outStream, fmt, args);
-					fprintf(outStream, "\n");
-					fflush(outStream);
-				}
+				//{
+				//	ScopedLock lock(c->logMutex_);
+				//	fprintf(outStream, "%f <%s-%x-vlc> [%d]\t", seconds, c->name_.c_str(), data, level);
+				//	vfprintf(outStream, fmt, args);
+				//	fprintf(outStream, "\n");
+				//	fflush(outStream);
+				//}
 				{
 					ScopedLock accessLock(c->accessMutex_);
 					static char buf[4096];
@@ -313,7 +313,6 @@ namespace vlc {
 				free(d_->buffer_);
 		}
 	}
-
 	void StreamController::play(const std::string& url, OnRendering onRendering, const void* userData)
 	{
 		log(d_.get(), LIBVLC_NOTICE, "play request for URL %s", url.c_str(), NULL);
