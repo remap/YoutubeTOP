@@ -1,5 +1,5 @@
 //
-//	youtube_top.h is part of YouTubeTOP.dll
+//	youtube_top.cpp is part of YouTubeTOP.dll
 //
 //	Copyright 2015 Regents of the University of California
 //
@@ -247,7 +247,7 @@ cookNextFrames_(1),
 thumbnailReady_(false)
 {
 	myExecuteCount = 0;
-	logFile_ = initLogFile();
+	//logFile_ = initLogFile();
 }
 
 YouTubeTOP::~YouTubeTOP()
@@ -958,18 +958,18 @@ YouTubeTOP::initLogFile()
 void 
 YouTubeTOP::log(const char *fmt, ...)
 {
-	FILE* outStream = logFile_;
-	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
-	std::chrono::duration<double> seconds = now.time_since_epoch();
+	//FILE* outStream = logFile_;
+	//std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+	//std::chrono::duration<double> seconds = now.time_since_epoch();
 
-	va_list args;
-	va_start(args, fmt);
+	//va_list args;
+	//va_start(args, fmt);
 
-	fprintf(outStream, "%f\t", seconds);
-	vfprintf(outStream, fmt, args);
-	va_end(args);
-	fprintf(outStream, "\n");
-	fflush(outStream);
+	//fprintf(outStream, "%f\t", seconds);
+	//vfprintf(outStream, fmt, args);
+	//va_end(args);
+	//fprintf(outStream, "\n");
+	//fflush(outStream);
 }
 
 //********************************************************************************
