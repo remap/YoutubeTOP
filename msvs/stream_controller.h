@@ -37,8 +37,6 @@ namespace vlc {
 
 	class StreamController {
 	public:
-		typedef std::function<void(const void*, const void* userData)> OnRendering;
-
 		class Status {
 		public:
 			struct VideoInfo {
@@ -49,17 +47,35 @@ namespace vlc {
 				double fps_;
 			};
 
+			struct AudioInfo {
+				unsigned rate_, channels_;
+				char format_[4];
+			};
+
 			libvlc_state_t state_;
 			std::string videoUrl_;
-			bool isVideoInfoReady_;
+			bool isVideoInfoReady_, isAudioInfoReady_;
 			VideoInfo videoInfo_;
+			AudioInfo audioInfo_;
 			std::string warningMessage_, errorMessage_, infoString_;
 		};
+
+		struct AudioData {
+			AudioData():nSamples_(0), bufferSize_(0), buffer_(nullptr) {}
+			Status::AudioInfo audioInfo_;
+			unsigned nSamples_;
+			unsigned bufferSize_;
+			uint16_t* buffer_;
+		};
+
+		typedef std::function<void(const void*, const void* userData)> OnRendering;
+		typedef std::function<void(const AudioData, const void* userData)> OnAudioData;
 
 		StreamController(std::string name = "StreamController");
 		~StreamController();
 
-		void play(const std::string& url, OnRendering onRendering, const void* userData);
+		void play(const std::string& url, OnRendering onRendering, 
+			OnAudioData onAudioData, const void* userData);
 		void play();
 		void pause(bool isOn);
 		void stop();

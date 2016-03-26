@@ -45,7 +45,12 @@ namespace vlc {
 			bool volumeChanged = false;
 
 			unsigned char *buffer_ = nullptr;
+
+			unsigned audioBufferSize_ = 0, nAudioSamples_ = 0;
+			uint16_t* audioBuffer_ = nullptr;
+
 			StreamController::OnRendering onRendering_;
+			StreamController::OnAudioData onAudioData_;
 			StreamController::Status status_;
 
 			void subscribeToEvents(std::initializer_list<libvlc_event_type_t> events);
@@ -262,6 +267,60 @@ namespace vlc {
 
 			c->status_.videoInfo_.currentTime_ = libvlc_media_player_get_time(c->vlcPlayer_);
 		}
+
+		int handleAudioFormat(void **opaque, char *format, unsigned *rate,
+			unsigned *channels)
+		{
+			auto c = reinterpret_cast<internal::StreamControllerPrivate*>(*opaque);
+			ScopedLock lock(c->accessMutex_);
+
+			log(c, LIBVLC_DEBUG, "received new audio format info", NULL);
+			if (c->audioBuffer_)
+			{
+				free(c->audioBuffer_);
+				c->audioBufferSize_ = 0;
+				c->nAudioSamples_ = 0;
+				c->audioBuffer_ = nullptr;
+			}
+
+			c->status_.audioInfo_.rate_ = *rate;
+			c->status_.audioInfo_.channels_ = *channels;
+			memcpy(c->status_.audioInfo_.format_, format, 4);
+			c->status_.isAudioInfoReady_ = true;
+
+			return 0;
+		}
+
+		void audioPlay(void *opaque, const void *samples, unsigned count, int64_t pts)
+		{
+			if (count == 0) return;
+
+			// copy audio data
+			auto c = reinterpret_cast<internal::StreamControllerPrivate*>(opaque);
+			ScopedLock lock(c->accessMutex_);
+			unsigned bufSize = count * sizeof(uint16_t);
+
+			if (!c->audioBuffer_ || bufSize > c->audioBufferSize_)
+			{
+				c->nAudioSamples_ = count;
+				c->audioBufferSize_ = bufSize;
+				c->audioBuffer_ = (uint16_t*)realloc(c->audioBuffer_, c->audioBufferSize_);
+			}
+
+			memcpy(c->audioBuffer_, samples, c->audioBufferSize_);
+
+			if (c->onAudioData_)
+			{
+				StreamController::AudioData ad;
+
+				ad.audioInfo_ = c->status_.audioInfo_;
+				ad.nSamples_ = c->nAudioSamples_;
+				ad.bufferSize_ = c->audioBufferSize_;
+				ad.buffer_ = c->audioBuffer_;
+
+				c->onAudioData_(ad, c->userData_);
+			}
+		}
 	}
 
 	void internal::StreamControllerPrivate::subscribeToEvents(std::initializer_list<libvlc_event_type_t> events)
@@ -275,6 +334,7 @@ namespace vlc {
 	void internal::StreamControllerPrivate::flushStatus()
 	{
 		status_.isVideoInfoReady_ = false;
+		status_.isAudioInfoReady_ = false;
 		status_.state_ = libvlc_NothingSpecial;
 		status_.videoUrl_ = "";
 		status_.videoInfo_.bufferLevel_ = 0;
@@ -316,6 +376,8 @@ namespace vlc {
 
 			libvlc_video_set_callbacks(d_->vlcPlayer_, &lockCB, NULL /*unlock*/, &displayCB, d_.get());
 			libvlc_video_set_format_callbacks(d_->vlcPlayer_, handleFormat, NULL);
+			libvlc_audio_set_callbacks(d_->vlcPlayer_, &audioPlay, NULL, NULL, NULL, NULL, d_.get());
+			libvlc_audio_set_format_callbacks(d_->vlcPlayer_, &handleAudioFormat, NULL);
 		}
 		else
 			throw std::exception("Couldn't initialize VLC instance");
@@ -338,15 +400,19 @@ namespace vlc {
 
 			if (d_->buffer_)
 				free(d_->buffer_);
+			if (d_->audioBuffer_)
+				free(d_->audioBuffer_);
 		}
 	}
-	void StreamController::play(const std::string& url, OnRendering onRendering, const void* userData)
+	void StreamController::play(const std::string& url, OnRendering onRendering,
+		OnAudioData onAudioData, const void* userData)
 	{
 		log(d_.get(), LIBVLC_NOTICE, "play request for URL %s", url.c_str(), NULL);
 		libvlc_media_player_stop(d_->vlcPlayer_);
 
 		d_->flushStatus();
 		d_->onRendering_ = onRendering;
+		d_->onAudioData_ = onAudioData;
 		d_->userData_ = userData;
 		d_->status_.videoUrl_ = url;
 

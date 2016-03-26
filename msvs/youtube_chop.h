@@ -23,6 +23,7 @@
 
 #include <string>
 #include "CHOP_CPlusPlusBase.h"
+#include "stream_controller.h"
 
 /*
 This class works in conjunction with YouTubeTOP. It retrieves audio data from
@@ -74,10 +75,22 @@ private:
 
 	Status status_;
 	Parameters parameters_;
+	vlc::StreamController::Status::AudioInfo audioInfo_;
+	unsigned bufferSize_, bufferWriterPtr_, bufferReadPtr_;
+	unsigned bufferSampleSize_;
+	//unsigned nWroteBytes_, nReadBytes_;
+	uint16_t* audioBuffer_;
+	YouTubeTOP* top_;
+	std::mutex bufferAccess_;
+
+	void onAudioData(vlc::StreamController::AudioData ad);
+
+	void makeBuffer(unsigned size);
+	void freeBuffer();
 
 	void updateParameters(const CHOP_InputArrays* inputArrays);
 	std::string getMyPath();
-	const YouTubeTOP* loadTop(const std::string& topPath);
+	YouTubeTOP* loadTop(const std::string& topPath);
 
 	static std::string getStatusString(Status s);
 };

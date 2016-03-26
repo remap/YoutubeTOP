@@ -29,21 +29,21 @@
 
 using namespace std;
 
-typedef set<const YouTubeTOP*> TopArrayType;
-typedef map<string, const YouTubeTOP*> TopMapType;
+typedef set<YouTubeTOP*> TopArrayType;
+typedef map<string, YouTubeTOP*> TopMapType;
 
 static TopArrayType TopArray;
 static TopMapType TopMap;
 static mutex TopAccess;
 
-void SharedData::addTop(const YouTubeTOP * top)
+void SharedData::addTop(YouTubeTOP * top)
 {
 	ScopedLock lock(TopAccess);
 	TopArray.insert(top);
 	TopMap[top->getNodeFullPath()] = top;
 }
 
-void SharedData::removeTop(const YouTubeTOP * top)
+void SharedData::removeTop(YouTubeTOP * top)
 {
 	ScopedLock lock(TopAccess);
 	if (TopArray.find(top) != TopArray.end())
@@ -54,7 +54,7 @@ void SharedData::removeTop(const YouTubeTOP * top)
 	}
 }
 
-const YouTubeTOP * SharedData::getTop(const std::string & topNodeName)
+YouTubeTOP * SharedData::getTop(const std::string & topNodeName)
 {
 	ScopedLock lock(TopAccess);
 

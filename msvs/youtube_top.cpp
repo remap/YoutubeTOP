@@ -193,10 +193,6 @@ enum class TouchInputName {
 
 int createVideoTexture(unsigned width, unsigned height, void *frameBuffer);
 void renderTexture(GLuint texId, unsigned width, unsigned height, void* data);
-inline bool getFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, float &value);
-inline bool updateFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &updated, float &value);
-inline bool getStringValue(const TOP_InputArrays* arrays, TouchInputName inputName, std::string &value);
-inline bool getBoolValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &value);
 bool fileExist(const char *fileName);
 
 // These functions are basic C function, which the DLL loader can find
@@ -461,7 +457,10 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 			thumbnailController()->stop();
 		else
 		{
-			thumbnailController()->play(parameters_.thumbnailUrl_, std::bind(&YouTubeTOP::onThumbnailRendering, this, _1, _2), thumbnailController());
+			thumbnailController()->play(parameters_.thumbnailUrl_, 
+				std::bind(&YouTubeTOP::onThumbnailRendering, this, _1, _2),
+				nullptr,
+				thumbnailController());
 			log("requested thumbnail - %s", parameters_.thumbnailUrl_.c_str());
 		}
 	}
@@ -513,7 +512,10 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 					(handoverStatus_ == Initiated && parameters_.currentUrl_ != handoverControllerStatus_.videoUrl_))
 				{
 					handoverStatus_ = Initiated;
-					handoverController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), handoverController_);
+					handoverController_->play(parameters_.currentUrl_,
+						std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2),
+						std::bind(&YouTubeTOP::onAudioData, this, _1, _2),
+						handoverController_);
 					handoverInfoStaled_ = false;
 
 					log("initiated handover for URL %s", parameters_.currentUrl_.c_str());
@@ -523,8 +525,14 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 			{
 				status_ = Status::None;
 				isFrameUpdated_ = false;
-				activeController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), activeController_);
-				handoverController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), handoverController_);
+				activeController_->play(parameters_.currentUrl_, 
+					std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), 
+					std::bind(&YouTubeTOP::onAudioData, this, _1, _2),
+					activeController_);
+				handoverController_->play(parameters_.currentUrl_,
+					std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), 
+					std::bind(&YouTubeTOP::onAudioData, this, _1, _2),
+					handoverController_);
 				needAdjustStartTimeActive_ = (startTimeMs_ != 0);
 				activeInfoStaled_ = false;
 				handoverInfoStaled_ = false;
@@ -826,6 +834,13 @@ std::string YouTubeTOP::getNodeFullPath() const
 	return std::string(myNodeInfo->nodeFullPath);
 }
 
+void YouTubeTOP::registerAudioCallback(AudioCallback callback)
+{
+	ScopedLock lock(audioCallbackMutex_);
+
+	audioCallback_ = callback;
+}
+
 #pragma mark - private
 void
 YouTubeTOP::onFrameRendering(const void* frameData, const void* userData)
@@ -839,6 +854,17 @@ YouTubeTOP::onFrameRendering(const void* frameData, const void* userData)
 			memcpy(frameData_, frameData, activeControllerStatus_.videoInfo_.frameSize_);
 			isFrameUpdated_ = true;
 		}
+	}
+}
+
+void YouTubeTOP::onAudioData(const StreamController::AudioData ad, const void * userData)
+{	
+	if (userData == activeController_)
+	{
+		ScopedLock lock(audioCallbackMutex_);
+
+		if (audioCallback_)
+			audioCallback_(ad);
 	}
 }
 
@@ -969,7 +995,10 @@ YouTubeTOP::performTransition()
 		initTexture();
 
 	// set spare controller to prebuffer current video
-	handoverController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), handoverController_);
+	handoverController_->play(parameters_.currentUrl_, 
+		std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), 
+		std::bind(&YouTubeTOP::onAudioData, this, _1, _2),
+		handoverController_);
 }
 
 void
@@ -1077,65 +1106,3 @@ renderTexture(GLuint texId, unsigned width, unsigned height, void* data)
 	glTexCoord2f(0., 0.); glVertex2i(0, height);
 	glEnd();
 }
-
-//bool
-//getStringValue(const TOP_InputArrays* arrays, TouchInputName inputName, std::string &value)
-//{
-//	if (arrays->numStringInputs > TouchInputs[inputName].index_ &&
-//		std::string(arrays->stringInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
-//	{
-//		std::string str = std::string(arrays->stringInputs[TouchInputs[inputName].index_].value);
-//		str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
-//		str.erase(std::remove(str.begin(), str.end(), '\n'), str.end());
-//		value = str;
-//		return true;
-//	}
-//	return false;
-//}
-//
-//bool
-//getFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, float &value)
-//{
-//	if (arrays->numFloatInputs > TouchInputs[inputName].index_ &&
-//		std::string(arrays->floatInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
-//	{
-//		int idx = TouchInputs[inputName].index_;
-//		int subIdx = TouchInputs[inputName].subIndex_;
-//		value = arrays->floatInputs[idx].values[subIdx];
-//		return true;
-//	}
-//	return false;
-//}
-//
-//bool 
-//updateFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &updated, float &value)
-//{
-//	float newValue = 0;
-//	//updated = false;
-//
-//	if (getFloatValue(arrays, inputName, newValue))
-//	{
-//		if (value != newValue)
-//		{
-//			updated = true;
-//			value = newValue;
-//		}
-//
-//		return true;
-//	}
-//	return false;
-//}
-//
-//bool
-//getBoolValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &value)
-//{
-//	if (arrays->numFloatInputs > TouchInputs[inputName].index_ &&
-//		std::string(arrays->floatInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
-//	{
-//		int idx = TouchInputs[inputName].index_;
-//		int subIdx = TouchInputs[inputName].subIndex_;
-//		value = arrays->floatInputs[idx].values[subIdx] > 0.5;
-//		return true;
-//	}
-//	return false;
-//}

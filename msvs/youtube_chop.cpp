@@ -28,25 +28,34 @@
 #include "youtube_chop.h"
 #include "youtube_top.h"
 #include "shared_data.h"
+#include "stream_controller.h"
+
+using namespace std::placeholders;
 
 enum class InfoDatIndex {
 	State,
-	Binding
+	Binding,
+	Format
 };
 
 static std::map<InfoDatIndex, std::string> RowNames = {
 	{ InfoDatIndex::State, "state" },
-	{ InfoDatIndex::Binding, "binding" }
+	{ InfoDatIndex::Binding, "binding" },
+	{ InfoDatIndex::Format, "sampleFormat" }
 };
 
 enum class InfoChopIndex {
 	ExecuteCount,
-	Samples
+	Samples,
+	SampleRate,
+	nChannels
 };
 
 static std::map<InfoChopIndex, std::string> ChanNames = {
 	{ InfoChopIndex::ExecuteCount, "executeCount" },
-	{ InfoChopIndex::Samples, "nSamples" }
+	{ InfoChopIndex::Samples, "nSamples" },	
+	{ InfoChopIndex::SampleRate, "sampleRate" },
+	{ InfoChopIndex::nChannels, "nChannels" }
 };
 
 enum class TouchInputName {
@@ -95,14 +104,16 @@ extern "C"
 
 
 YouTubeCHOP::YouTubeCHOP(const CHOP_NodeInfo *info) : myNodeInfo(info),
-status_(NotBinded)
+status_(NotBinded), top_(nullptr), audioBuffer_(nullptr),
+bufferSize_(0), bufferWriterPtr_(0), bufferReadPtr_(0)
 {
 	myExecuteCount = 0;
 }
 
 YouTubeCHOP::~YouTubeCHOP()
 {
-
+	if (audioBuffer_)
+		free(audioBuffer_);
 }
 
 void
@@ -117,31 +128,23 @@ YouTubeCHOP::getGeneralInfo(CHOP_GeneralInfo *ginfo)
 bool
 YouTubeCHOP::getOutputInfo(CHOP_OutputInfo *info)
 {
-	// If there is an input connected, we are going to match it's channel names etc
-	// otherwise we'll specify our own.
-	if (info->inputArrays->numCHOPInputs > 0)
-	{
-		return false;
-	}
+	info->numChannels = 2;
+
+	if (!top_)
+		info->sampleRate = 44100;
 	else
 	{
-		info->numChannels = 1;
-
-		// Since we are outputting a timeslice, the system will dictate
-		// the length and startIndex of the CHOP data
-		//info->length = 1;
-		//info->startIndex = 0
-
-		// For illustration we are going to output 120hz data
-		info->sampleRate = 120;
-		return true;
+		ScopedLock lock(bufferAccess_);
+		info->sampleRate = audioInfo_.rate_;
 	}
+	
+	return true;
 }
 
 const char*
 YouTubeCHOP::getChannelName(int index, void* reserved)
 {
-	return "chan1";
+	return (index == 0 ? "chan1" : "chan2" ); 
 }
 
 void
@@ -152,38 +155,19 @@ YouTubeCHOP::execute(const CHOP_Output* output,
 	updateParameters(inputs);
 	myExecuteCount++;
 
-	// In this case we'll just take the first input and re-output it with it's
-	// value divivded by two
-	if (inputs->numCHOPInputs > 0)
-	{
-		// We know the first CHOP has the same number of channels
-		// because we retuend false from getOutputInfo. 
+	unsigned nSamplesPerChannel = output->length;
+	unsigned nSamples = 2*nSamplesPerChannel;
 
-		int ind = 0;
-		for (int i = 0; i < output->numChannels; i++)
-		{
-			for (int j = 0; j < output->length; j++)
-			{
-				output->channels[i][j] = inputs->CHOPInputs[0].channels[i][ind] / 2.0f;
-				ind++;
-				// Make sure we don't read past the end of the CHOP input
-				ind = ind % inputs->CHOPInputs[0].length;
-			}
-		}
-
-	}
-	else // If not input is connected, lets output a sine wave instead
+	if (bufferWriterPtr_ - bufferReadPtr_ > nSamples*sizeof(uint16_t))
 	{
-		// Notice that startIndex and the output->length is used to output a smooth
-		// wave by ensuring that we are outputting a value for each sample
-		// Since we are outputting at 120, for each frame that has passed we'll be
-		// outputing 2 samples (assuming the timeline is running at 60hz).
-		for (int i = 0; i < output->numChannels; i++)
+		ScopedLock lock(bufferAccess_);
+
+		for (int i = 0; i < nSamplesPerChannel; i++)
 		{
-			for (int j = 0; j < output->length; j++)
-			{
-				output->channels[i][j] = sin(((float)output->startIndex + j) / 100.0f);
-			}
+			unsigned sampleIdx = (bufferReadPtr_%bufferSize_) / sizeof(uint16_t);
+			output->channels[0][i] = audioBuffer_[sampleIdx++];
+			output->channels[1][i] = audioBuffer_[sampleIdx];
+			bufferReadPtr_ += 2*sizeof(uint16_t);
 		}
 	}
 }
@@ -212,6 +196,11 @@ YouTubeCHOP::getInfoCHOPChan(int index,
 		case InfoChopIndex::Samples:
 			chan->value = 0;
 			break;
+		case InfoChopIndex::SampleRate:
+			chan->value = audioInfo_.rate_;
+			break;
+		case InfoChopIndex::nChannels:
+			chan->value = audioInfo_.channels_;
 		default:
 			break;
 		}
@@ -252,6 +241,12 @@ YouTubeCHOP::getInfoDATEntries(int index,
 		case InfoDatIndex::Binding:
 			sprintf(tempBuffer2, "%s", parameters_.topFullPath_.c_str());
 			break;
+		case InfoDatIndex::Format:
+			if (top_)
+			{
+				sprintf(tempBuffer2, "%s", audioInfo_.format_);
+			}
+			break;
 		default:
 			break;
 		}
@@ -261,22 +256,77 @@ YouTubeCHOP::getInfoDATEntries(int index,
 	entries->values[1] = tempBuffer2;
 }
 
+void YouTubeCHOP::onAudioData(vlc::StreamController::AudioData ad)
+{
+	ScopedLock lock(bufferAccess_);
+	audioInfo_ = ad.audioInfo_;
+	makeBuffer(ad.audioInfo_.rate_*sizeof(uint16_t));
+
+	unsigned writeOffset = bufferWriterPtr_%bufferSize_;
+
+	// audio buffer is cyclic
+	if (writeOffset + ad.bufferSize_ > bufferSize_)
+	{
+		unsigned excess = (writeOffset + ad.bufferSize_ - bufferSize_);
+		unsigned part1 = ad.bufferSize_ - excess, part2 = excess;
+		memcpy((uint8_t*)audioBuffer_ + writeOffset, ad.buffer_, part1);
+		memcpy((uint8_t*)audioBuffer_, (uint8_t*)ad.buffer_ +part1, part2);
+	}
+	else
+		memcpy((uint8_t*)audioBuffer_ + writeOffset, ad.buffer_, ad.bufferSize_);
+
+	bufferWriterPtr_ += ad.bufferSize_;
+}
+
+void YouTubeCHOP::makeBuffer(unsigned size)
+{
+	if (bufferSize_ < size || !audioBuffer_)
+	{
+		bufferSize_ = size;
+		audioBuffer_ = (uint16_t*)realloc(audioBuffer_, size);
+		bufferWriterPtr_ = 0;
+	}
+}
+
+void YouTubeCHOP::freeBuffer()
+{
+	if (audioBuffer_)
+	{
+		free(audioBuffer_);
+		bufferSize_ = 0;
+		bufferWriterPtr_ = 0;
+		bufferReadPtr_ = 0;
+	}
+}
+
 void YouTubeCHOP::updateParameters(const CHOP_InputArrays * inputArrays)
 {
 	TouchInputHelper<CHOP_InputArrays, TouchInputName> inputHelper(TouchInputs);
 
 	inputHelper.getStringValue(inputArrays, TouchInputName::TopPath, parameters_.topFullPath_);
-	const YouTubeTOP *top = loadTop(parameters_.topFullPath_);
+	YouTubeTOP* top = loadTop(parameters_.topFullPath_);
 
 	if (!top)
 	{
+		top_->registerAudioCallback(nullptr);
+		top_ = nullptr;
+		freeBuffer();
 		if (parameters_.topFullPath_ == "")
 			status_ = NotBinded;
 		else
 			status_ = BindingError;
 	}
 	else
+	{
+		if (top != top_)
+		{
+			if (top_) top_->registerAudioCallback(nullptr);
+			top_ = top;
+			top_->registerAudioCallback(std::bind(&YouTubeCHOP::onAudioData, this, _1));
+		}
+
 		status_ = Binded;
+	}
 }
 
 std::string YouTubeCHOP::getMyPath()
@@ -301,10 +351,10 @@ std::string YouTubeCHOP::getMyPath()
 	return path.str();
 }
 
-const YouTubeTOP * YouTubeCHOP::loadTop(const std::string& topPath)
+YouTubeTOP * YouTubeCHOP::loadTop(const std::string& topPath)
 {
 	// try whatever we have in full path as a full path...
-	const YouTubeTOP *top = SharedData::getTop(topPath);
+	YouTubeTOP *top = SharedData::getTop(topPath);
 
 	if (!top)
 	{ // now try using our path and topFullPath_ as TOP name...

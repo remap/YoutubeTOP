@@ -24,12 +24,33 @@
     <ClInclude Include="TOP_CPlusPlusBase.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="CHOP_CPlusPlusBase.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="youtube_chop.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="shared_data.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="touch_helpers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stream_controller.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="youtube_top.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="youtube_chop.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="shared_data.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="touch_helpers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

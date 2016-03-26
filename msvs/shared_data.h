@@ -29,9 +29,9 @@ class YouTubeTOP;
 // thread-safe class for sharing data between CHOPs and TOPs
 class SharedData {
 public:
-	static void addTop(const YouTubeTOP* top);
-	static void removeTop(const YouTubeTOP* top);
-	static const YouTubeTOP* getTop(const std::string& topNodeName);
+	static void addTop(YouTubeTOP* top);
+	static void removeTop(YouTubeTOP* top);
+	static YouTubeTOP* getTop(const std::string& topNodeName);
 };
 
 #endif

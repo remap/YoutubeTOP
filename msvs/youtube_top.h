@@ -30,6 +30,8 @@
 class YouTubeTOP : public TOP_CPlusPlusBase
 {
 public:
+	typedef std::function<void(const vlc::StreamController::AudioData)> AudioCallback;
+
 	YouTubeTOP(const TOP_NodeInfo *info);
 	virtual ~YouTubeTOP();
 
@@ -56,6 +58,8 @@ public:
 	const char*			getInfoPopupString();
 
 	std::string			getNodeFullPath() const;
+	void				registerAudioCallback(AudioCallback callback);
+
 private:
 	typedef enum _Status {
 		None,
@@ -100,6 +104,7 @@ private:
 	std::string libVersion_ = LIB_VERSION;
 	FILE* logFile_;
 	std::mutex frameBufferAcces_, thumbnailBufferAcces_;
+	std::mutex audioCallbackMutex_;
 	void* frameData_ = nullptr;
 	void* thumbnailFrameData_ = nullptr;
 	bool isFrameUpdated_;
@@ -108,6 +113,7 @@ private:
 	bool activeInfoStaled_, handoverInfoStaled_;
 	int cookNextFrames_;
 	bool thumbnailReady_;
+	AudioCallback audioCallback_;
 
 	unsigned texture_, thumbnail_;
 
@@ -145,7 +151,6 @@ private:
 		vlc::StreamController spareController_;
 	};
 
-
 	StreamControllerPair streamControllers_;
 
 	vlc::StreamController* activeController_;
@@ -158,6 +163,7 @@ private:
 	bool videoFormatReady_;
 
 	void onFrameRendering(const void* frameData, const void* userData);
+	void onAudioData(const vlc::StreamController::AudioData ad, const void* userData);
 	void onThumbnailRendering(const void* frameData, const void* userData);
 	void initTexture();
 	void initThumbnailTexture();
@@ -168,10 +174,10 @@ private:
 	void swapControllers();
 	void swapControllers(vlc::StreamController** controller1, vlc::StreamController** controller2);
 	vlc::StreamController* thumbnailController(){
-		return thumbnailController_; // (thumbnailReady_) ? thumbnailController_ : thumbnailController_;
+		return thumbnailController_;
 	}
 	vlc::StreamController::Status thumbnailControllerStatus(){
-		return thumbnailControllerStatus_; // (thumbnailReady_) ? activeControllerStatus_ : thumbnailControllerStatus_;
+		return thumbnailControllerStatus_;
 	}
 
 	FILE* initLogFile();
