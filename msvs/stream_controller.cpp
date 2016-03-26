@@ -225,6 +225,32 @@ namespace vlc {
 			{
 				log(c, LIBVLC_NOTICE, "new state %s", state.c_str(), NULL);
 				c->status_.state_ = newState;
+
+				if (newState == libvlc_Playing && c->status_.videoInfo_.fps_ == 0)
+				{
+					libvlc_media_t *media = libvlc_media_player_get_media(c->vlcPlayer_);
+
+					if (media)
+					{
+						libvlc_media_track_t **tracks = NULL;
+						static int ntracks = 0;
+
+						libvlc_media_parse(media);
+						ntracks = libvlc_media_tracks_get(media, &tracks);
+
+						for (int i = 0; i < ntracks; i++)
+						{
+							if (tracks[i]->i_type == libvlc_track_video)
+							{
+								c->status_.videoInfo_.fps_ = double(tracks[i]->video->i_frame_rate_num) / double(tracks[i]->video->i_frame_rate_den);
+								break; // we assume 1 video track
+							}
+						}
+
+						if (ntracks && tracks != NULL)
+							libvlc_media_tracks_release(tracks, ntracks);
+					}
+				}
 			}
 			
 			double progress = (double)e->u.media_player_time_changed.new_time / (double)libvlc_media_player_get_length(c->vlcPlayer_);
@@ -256,6 +282,7 @@ namespace vlc {
 		status_.videoInfo_.height_ = 0;
 		status_.videoInfo_.width_ = 0;
 		status_.videoInfo_.totalTime_ = 0;
+		status_.videoInfo_.fps_ = 0;
 	}
 
 	StreamController::StreamController(std::string name)
@@ -365,6 +392,22 @@ namespace vlc {
 			{
 				log(d_.get(), LIBVLC_NOTICE, "seek to position %.2f", pos, NULL);
 				libvlc_media_player_set_position(d_->vlcPlayer_, pos);
+			}
+		}
+		else
+			log(d_.get(), LIBVLC_WARNING, "media is not seekable", NULL);
+	}
+
+	void StreamController::seekMs(int64_t timeMs)
+	{
+		if (libvlc_media_player_is_seekable(d_->vlcPlayer_))
+		{
+			libvlc_time_t curTime = libvlc_media_player_get_time(d_->vlcPlayer_);
+			
+			if (curTime != timeMs)
+			{
+				log(d_.get(), LIBVLC_NOTICE, "set time to %d", timeMs, NULL);
+				libvlc_media_player_set_time(d_->vlcPlayer_, timeMs);
 			}
 		}
 		else

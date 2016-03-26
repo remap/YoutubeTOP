@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -26,26 +26,26 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v120</PlatformToolset>
+    <PlatformToolset>v140</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v120</PlatformToolset>
+    <PlatformToolset>v140</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v120</PlatformToolset>
+    <PlatformToolset>v140</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v120</PlatformToolset>
+    <PlatformToolset>v140</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
@@ -89,7 +89,8 @@
       <AdditionalDependencies>libvlc.lib; libvlccore.lib; OpenGL32.lib; kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(SolutionDir)$(Configuration)\$(TargetFileName)" "$(SolutionDir)..\touch\DLLs\" /Y</Command>
+      <Command>copy "$(SolutionDir)$(Configuration)\$(TargetFileName)" "C:\sfgs\touch\dlls\" /Y
+copy "$(SolutionDir)$(Configuration)\$(TargetFileName)" "C:\sandbox\YoutubeTOP\touch\DLLs\" /Y</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -126,7 +127,7 @@ copy "$(SolutionDir)..\..\vlc\x64\libgcc_s_seh-1.dll" "$(SolutionDir)x64\$(Confi
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(SolutionDir)$(Configuration)\$(TargetFileName)" "$(SolutionDir)..\touch\DLLs\" /Y</Command>
+      <Command>copy "$(SolutionDir)$(Configuration)\$(TargetFileName)" "C:\sfgs\touch\dlls\" /Y</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -145,12 +146,19 @@ copy "$(SolutionDir)..\..\vlc\x64\libgcc_s_seh-1.dll" "$(SolutionDir)x64\$(Confi
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="CHOP_CPlusPlusBase.h" />
+    <ClInclude Include="shared_data.h" />
     <ClInclude Include="stream_controller.h" />
     <ClInclude Include="TOP_CPlusPlusBase.h" />
+    <ClInclude Include="touch_helpers.h" />
+    <ClInclude Include="youtube_chop.h" />
     <ClInclude Include="youtube_top.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="shared_data.cpp" />
     <ClCompile Include="stream_controller.cpp" />
+    <ClCompile Include="touch_helpers.cpp" />
+    <ClCompile Include="youtube_chop.cpp" />
     <ClCompile Include="youtube_top.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

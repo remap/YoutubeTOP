@@ -31,6 +31,9 @@
 #include <fstream>
 #include <chrono>
 
+#include "touch_helpers.h"
+#include "shared_data.h"
+
 using namespace vlc;
 using namespace std::placeholders;
 
@@ -48,6 +51,9 @@ default:                                                                        
 }\
 }\
 }
+
+
+static int nTOPInstances = 0;
 
 /**
  * This enum identifies output DAT's different fields
@@ -76,7 +82,38 @@ enum class InfoDatIndex {
 	EndTimeSec,
 	Blackout,
 	Thumbnail,
-	ThumbnailOn
+	ThumbnailOn,
+	LibVersion,
+	FPS,
+	CurrentTime
+};
+
+/**
+* This enum identifies output DAT's different fields
+* The output DAT is a table that contains two
+* columns : name(identified by this enum) and value
+* (either float or string)
+*/
+enum class InfoChopIndex {
+	ExecuteCount,
+	Looping,
+	Paused,
+	Duration,
+	PlaybackProgress,
+	BufferingProgress,
+	VideoWidth,
+	VideoHeight,
+	HandoverStatus,
+	SwitchOnCue,
+	SwitchCue,
+	PlaybackSpeed,
+	StarTimeSec,
+	EndTimeSec,
+	Blackout,
+	ThumbnailOn,
+	FPS,
+	CurrentTime,
+	nInstances
 };
 
 /**
@@ -84,27 +121,37 @@ enum class InfoDatIndex {
  * (table caption)
  */
 static std::map<InfoDatIndex, std::string> RowNames = {
-		{ InfoDatIndex::ExecuteCount, "executeCount" },
 		{ InfoDatIndex::URL, "URL" },
-		{ InfoDatIndex::Looping, "isLooping" },
-		{ InfoDatIndex::Paused, "isPaused" },
 		{ InfoDatIndex::State, "state" },
 		{ InfoDatIndex::TopStatus, "TOPstatus" },
-		{ InfoDatIndex::Duration, "Duration"},
-		{ InfoDatIndex::PlaybackProgress, "playbackProgress" },
-		{ InfoDatIndex::BufferingProgress, "bufferingProgress" },
-		{ InfoDatIndex::VideoWidth, "videoWidth" },
-		{ InfoDatIndex::VideoHeight, "videoHeight" },
-		{ InfoDatIndex::HandoverStatus, "handover" },
 		{ InfoDatIndex::HandoverState, "handoverState" },
-		{ InfoDatIndex::SwitchOnCue, "switchOnCue" },
-		{ InfoDatIndex::SwitchCue, "switchCue" },
-		{ InfoDatIndex::PlaybackSpeed, "playbackSpeed" },
-		{ InfoDatIndex::StarTimeSec, "startTime" },
-		{ InfoDatIndex::EndTimeSec, "endTime" },
-		{ InfoDatIndex::Blackout, "blackout" },
 		{ InfoDatIndex::Thumbnail, "thumbnail" },
-		{ InfoDatIndex::ThumbnailOn, "thumbnailOn" }
+		{ InfoDatIndex::LibVersion, "libVersion" }
+};
+
+/**
+* This maps output CHOP's channel names
+*/
+static std::map<InfoChopIndex, std::string> ChanNames = {
+	{ InfoChopIndex::ExecuteCount, "executeCount" },
+	{ InfoChopIndex::Looping, "isLooping" },
+	{ InfoChopIndex::Paused, "isPaused" },
+	{ InfoChopIndex::Duration, "duration" },
+	{ InfoChopIndex::PlaybackProgress, "playbackProgress" },
+	{ InfoChopIndex::BufferingProgress, "bufferingProgress" },
+	{ InfoChopIndex::VideoWidth, "videoWidth" },
+	{ InfoChopIndex::VideoHeight, "videoHeight" },
+	{ InfoChopIndex::HandoverStatus, "handover" },
+	{ InfoChopIndex::SwitchOnCue, "switchOnCue" },
+	{ InfoChopIndex::SwitchCue, "switchCue" },
+	{ InfoChopIndex::PlaybackSpeed, "playbackSpeed" },
+	{ InfoChopIndex::StarTimeSec, "startTime" },
+	{ InfoChopIndex::EndTimeSec, "endTime" },
+	{ InfoChopIndex::Blackout, "blackout" },
+	{ InfoChopIndex::ThumbnailOn, "thumbnailOn" },
+	{ InfoChopIndex::FPS, "framerate" },
+	{ InfoChopIndex::CurrentTime, "currentTime" },
+	{ InfoChopIndex::nInstances, "nInstances" }
 };
 
 /**
@@ -124,11 +171,6 @@ enum class TouchInputName {
 	Blackout,
 	Thumbnail,
 	ThumbnailOn
-};
-
-struct TouchInput {
-	std::string name_;
-	unsigned int index_, subIndex_;
 };
 
 /**
@@ -246,13 +288,17 @@ handoverInfoStaled_(false),
 cookNextFrames_(1),
 thumbnailReady_(false)
 {
+	SharedData::addTop(this);
+
 	myExecuteCount = 0;
+	nTOPInstances++;
 	//logFile_ = initLogFile();
 }
 
 YouTubeTOP::~YouTubeTOP()
 {
-
+	SharedData::removeTop(this);
+	nTOPInstances--;
 }
 
 void
@@ -312,15 +358,14 @@ YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 		if (needAdjustStartTimeActive_ &&
 			activeControllerStatus_.isVideoInfoReady_)
 		{
-			if (startTimeSec_ < activeControllerStatus_.videoInfo_.totalTime_)
+			if (startTimeMs_ < activeControllerStatus_.videoInfo_.totalTime_)
 			{
-				log("seek active. buffer %.2f", activeControllerStatus_.videoInfo_.bufferLevel_);
+				log("seek active to %d. buffer %.2f", startTimeMs_, activeControllerStatus_.videoInfo_.bufferLevel_);
 
-				float seekPos = (float)startTimeSec_ / (float)activeControllerStatus_.videoInfo_.totalTime_;
-				activeController_->seek(seekPos);
+				activeController_->seekMs(startTimeMs_);
 			}
 			else
-				log("startTime (%d) exceeds video length (%d). ignore seeking for active", startTimeSec_, activeControllerStatus_.videoInfo_.totalTime_);
+				log("startTime (%d) exceeds video length (%d). ignore seeking for active", startTimeMs_, activeControllerStatus_.videoInfo_.totalTime_);
 
 			needAdjustStartTimeActive_ = false;
 		}
@@ -340,17 +385,15 @@ YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 		if (needAdjustStartTimeHandover_ &&
 			handoverControllerStatus_.isVideoInfoReady_)
 		{
-			if (startTimeSec_ < handoverControllerStatus_.videoInfo_.totalTime_)
+			if (startTimeMs_ < handoverControllerStatus_.videoInfo_.totalTime_)
 			{
-				float seekPos = (float)startTimeSec_ / (float)handoverControllerStatus_.videoInfo_.totalTime_;
+				log("seek handover to %d. buffr %.2f", startTimeMs_, handoverControllerStatus_.videoInfo_.bufferLevel_);
 
-				log("seek handover to %.2f. buffr %.2f", seekPos, handoverControllerStatus_.videoInfo_.bufferLevel_);
-
-				handoverController_->seek(seekPos);
+				handoverController_->seekMs(startTimeMs_);
 				adjustedHandover = true;
 			}
 			else
-				log("startTime (%d) exceeds video length (%d). ignore seeking for handover", startTimeSec_, handoverControllerStatus_.videoInfo_.totalTime_);
+				log("startTime (%d) exceeds video length (%d). ignore seeking for handover", startTimeMs_, handoverControllerStatus_.videoInfo_.totalTime_);
 
 			needAdjustStartTimeHandover_ = false;
 		}
@@ -389,7 +432,6 @@ YouTubeTOP::getOutputFormat(TOP_OutputFormat *format)
 	return true;
 }
 
-
 void
 YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputArrays* arrays, void* reserved)
 {
@@ -405,12 +447,12 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 	if (parameters_.isNewStartTime_)
 	{
 		parameters_.isNewStartTime_ = false;
-		startTimeSec_ = 0;
-		startTimeSec_ = (int)parameters_.lastStartTimeSec_ * 1000;
-		needAdjustStartTimeActive_ = (startTimeSec_ > activeControllerStatus_.videoInfo_.currentTime_) || !activeControllerStatus_.isVideoInfoReady_;
+		startTimeMs_ = 0;
+		startTimeMs_ = (int)round(parameters_.lastStartTimeSec_ * 1000.);
+		needAdjustStartTimeActive_ = (startTimeMs_ > activeControllerStatus_.videoInfo_.currentTime_) || !activeControllerStatus_.isVideoInfoReady_;
 		needAdjustStartTimeHandover_ = true;
 
-		log("new start time %d adjust active %d adjust handover %d", startTimeSec_, needAdjustStartTimeActive_, needAdjustStartTimeHandover_);
+		log("new start time %d adjust active %d adjust handover %d", startTimeMs_, needAdjustStartTimeActive_, needAdjustStartTimeHandover_);
 	}
 
 	if (parameters_.thumbnailUrl_ != thumbnailController()->getStatus().videoUrl_)
@@ -483,7 +525,7 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				isFrameUpdated_ = false;
 				activeController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), activeController_);
 				handoverController_->play(parameters_.currentUrl_, std::bind(&YouTubeTOP::onFrameRendering, this, _1, _2), handoverController_);
-				needAdjustStartTimeActive_ = (startTimeSec_ != 0);
+				needAdjustStartTimeActive_ = (startTimeMs_ != 0);
 				activeInfoStaled_ = false;
 				handoverInfoStaled_ = false;
 				cookNextFrames_ = INT_MAX;
@@ -491,7 +533,7 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 				log("initiated playback for active and handover: %s", parameters_.currentUrl_.c_str());
 			}
 			
-			needAdjustStartTimeHandover_ = (startTimeSec_ != 0);
+			needAdjustStartTimeHandover_ = (startTimeMs_ != 0);
 
 			log("need adjust active: %d handover %d", needAdjustStartTimeActive_, needAdjustStartTimeHandover_);
 		}
@@ -610,9 +652,7 @@ YouTubeTOP::execute(const TOP_OutputFormatSpecs* outputFormat, const TOP_InputAr
 int
 YouTubeTOP::getNumInfoCHOPChans()
 {
-	// We return the number of channel we want to output to any Info CHOP
-	// connected to the TOP. In this example we are just going to send one channel.
-	return 1;
+	return ChanNames.size();
 }
 
 void
@@ -621,11 +661,77 @@ YouTubeTOP::getInfoCHOPChan(int index, TOP_InfoCHOPChan *chan)
 	// This function will be called once for each channel we said we'd want to return
 	// In this example it'll only be called once.
 
-	InfoDatIndex idx = (InfoDatIndex)index;
-	if (RowNames.find(idx) != RowNames.end())
+	InfoChopIndex idx = (InfoChopIndex)index;
+	if (ChanNames.find(idx) != ChanNames.end())
 	{
-		chan->name = (char*)RowNames[idx].c_str();
+		chan->name = (char*)ChanNames[idx].c_str();
+
+		switch (idx)
+		{
+		case InfoChopIndex::ExecuteCount:
+			chan->value = myExecuteCount;
+			break;
+		case InfoChopIndex::Looping:
+			chan->value = (float)parameters_.isLooping_;
+			break;
+		case InfoChopIndex::Paused:
+			chan->value = (float)parameters_.isPaused_;
+			break;
+		case InfoChopIndex::Duration:
+			chan->value = (float)activeControllerStatus_.videoInfo_.totalTime_ / 1000.;
+			break;
+		case InfoChopIndex::PlaybackProgress:
+			chan->value = (float)activeControllerStatus_.videoInfo_.currentTime_ / (float)activeControllerStatus_.videoInfo_.totalTime_;
+			break;
+		case InfoChopIndex::BufferingProgress:
+			chan->value = activeControllerStatus_.videoInfo_.bufferLevel_;
+			break;
+		case InfoChopIndex::VideoWidth:
+			chan->value = activeControllerStatus_.videoInfo_.width_;
+			break;
+		case InfoChopIndex::VideoHeight:
+			chan->value = activeControllerStatus_.videoInfo_.height_;
+			break;
+		case InfoChopIndex::HandoverStatus:
+			chan->value = handoverControllerStatus_.videoInfo_.bufferLevel_;
+			break;
+		case InfoChopIndex::SwitchOnCue:
+			chan->value = !parameters_.seamlessModeOn_;
+			break;
+		case InfoChopIndex::SwitchCue:
+			chan->value = parameters_.switchCue_;
+			break;
+		case InfoChopIndex::PlaybackSpeed:
+			chan->value = parameters_.lastPlaybackSpeed_;
+			break;
+		case InfoChopIndex::StarTimeSec:
+			chan->value = parameters_.lastStartTimeSec_;
+			break;
+		case InfoChopIndex::EndTimeSec:
+			chan->value = parameters_.lastEndTimeSec_;
+			break;
+		case InfoChopIndex::Blackout:
+			chan->value = parameters_.blackout_;
+			break;
+		case InfoChopIndex::ThumbnailOn:
+			chan->value = parameters_.thumbnailOn_;
+			break;
+		case InfoChopIndex::FPS:
+			chan->value = activeControllerStatus_.videoInfo_.fps_;
+			break;
+		case InfoChopIndex::CurrentTime:
+			chan->value = (float)activeControllerStatus_.videoInfo_.currentTime_ / 1000.;
+			break;
+		case InfoChopIndex::nInstances:
+			chan->value = nTOPInstances;
+			break;
+		default:
+			chan->value = -1;
+			break;
+		}
 	}
+	else
+		chan->name = "n_a";
 }
 
 bool		
@@ -657,27 +763,8 @@ YouTubeTOP::getInfoDATEntries(int index, int nEntries, TOP_InfoDATEntries *entri
 		strcpy(tempBuffer1, RowNames[idx].c_str());
 		switch (idx)
 		{
-		case InfoDatIndex::ExecuteCount:
-			sprintf(tempBuffer2, "%d", myExecuteCount);
-			break;
-		case InfoDatIndex::Looping:
-			sprintf(tempBuffer2, "%d", parameters_.isLooping_);
-			break;
-		case InfoDatIndex::Paused:
-			sprintf(tempBuffer2, "%d", parameters_.isPaused_);
-			break;
-		case InfoDatIndex::Blackout:
-			sprintf(tempBuffer2, "%d", parameters_.blackout_);
-			break;
-
-		case InfoDatIndex::BufferingProgress:
-			sprintf(tempBuffer2, "%.2f", activeControllerStatus_.videoInfo_.bufferLevel_);
-			break;
-		case InfoDatIndex::PlaybackProgress:
-			sprintf(tempBuffer2, "%.2f", (float)activeControllerStatus_.videoInfo_.currentTime_ / (float)activeControllerStatus_.videoInfo_.totalTime_);
-			break;
-		case InfoDatIndex::Duration:
-			sprintf(tempBuffer2, "%d", activeControllerStatus_.videoInfo_.totalTime_);
+		case InfoDatIndex::LibVersion:
+			sprintf(tempBuffer2, "%s", libVersion_.c_str());
 			break;
 		case InfoDatIndex::TopStatus:
 		{
@@ -695,13 +782,6 @@ YouTubeTOP::getInfoDATEntries(int index, int nEntries, TOP_InfoDATEntries *entri
 			sprintf(tempBuffer2, "%s", activeControllerStatus_.videoUrl_.c_str());
 			break;
 
-		case InfoDatIndex::VideoWidth:
-			sprintf(tempBuffer2, "%d", activeControllerStatus_.videoInfo_.width_);
-			break;
-		case InfoDatIndex::VideoHeight:
-			sprintf(tempBuffer2, "%d", activeControllerStatus_.videoInfo_.height_);
-			break;
-
 		case InfoDatIndex::HandoverState:
 		{
 			std::string state = getHandoverStatusString(handoverStatus_);
@@ -709,36 +789,8 @@ YouTubeTOP::getInfoDATEntries(int index, int nEntries, TOP_InfoDATEntries *entri
 		}
 			break;
 
-		case InfoDatIndex::HandoverStatus:
-			sprintf(tempBuffer2, "%.2f", handoverControllerStatus_.videoInfo_.bufferLevel_);
-			break;
-
-		case InfoDatIndex::SwitchOnCue:
-			sprintf(tempBuffer2, "%d", !parameters_.seamlessModeOn_);
-			break;
-
-		case InfoDatIndex::SwitchCue:
-			sprintf(tempBuffer2, "%d", parameters_.switchCue_);
-			break;
-
-		case InfoDatIndex::PlaybackSpeed:
-			sprintf(tempBuffer2, "%.2f", parameters_.lastPlaybackSpeed_);
-			break;
-
-		case InfoDatIndex::StarTimeSec:
-			sprintf(tempBuffer2, "%.0f", parameters_.lastStartTimeSec_);
-			break;
-
-		case InfoDatIndex::EndTimeSec:
-			sprintf(tempBuffer2, "%.0f", parameters_.lastEndTimeSec_);
-			break;
-
 		case InfoDatIndex::Thumbnail:
 			sprintf(tempBuffer2, "%s", parameters_.thumbnailUrl_.c_str());
-			break;
-
-		case InfoDatIndex::ThumbnailOn:
-			sprintf(tempBuffer2, "%d", parameters_.thumbnailOn_);
 			break;
 
 		default:
@@ -767,6 +819,11 @@ const char*
 YouTubeTOP::getInfoPopupString()
 {
 	return (activeControllerStatus_.infoString_ != "") ? activeControllerStatus_.infoString_.c_str() : NULL;
+}
+
+std::string YouTubeTOP::getNodeFullPath() const
+{
+	return std::string(myNodeInfo->nodeFullPath);
 }
 
 #pragma mark - private
@@ -862,23 +919,25 @@ YouTubeTOP::initThumbnailTexture()
 void
 YouTubeTOP::updateParameters(const TOP_InputArrays* arrays)
 {
-	getStringValue(arrays, TouchInputName::URL, parameters_.currentUrl_);
-	getStringValue(arrays, TouchInputName::Thumbnail, parameters_.thumbnailUrl_);
-	getBoolValue(arrays, TouchInputName::Pause, parameters_.isPaused_);
-	getBoolValue(arrays, TouchInputName::Loop, parameters_.isLooping_);
-	getBoolValue(arrays, TouchInputName::Blackout, parameters_.blackout_);
-	getBoolValue(arrays, TouchInputName::ThumbnailOn, parameters_.thumbnailOn_);
-	updateFloatValue(arrays, TouchInputName::SeekPosition, parameters_.isNewSeekValue_, parameters_.lastSeekPosition_);
-	updateFloatValue(arrays, TouchInputName::PlaybackSpeed, parameters_.isNewPlaybackSpeed_, parameters_.lastPlaybackSpeed_);
-	updateFloatValue(arrays, TouchInputName::StartTime, parameters_.isNewStartTime_, parameters_.lastStartTimeSec_);
-	updateFloatValue(arrays, TouchInputName::EndTime, parameters_.isNewEndTime_, parameters_.lastEndTimeSec_);
+	TouchInputHelper<TOP_InputArrays, TouchInputName> inputHelper(TouchInputs);
+
+	inputHelper.getStringValue(arrays, TouchInputName::URL, parameters_.currentUrl_);
+	inputHelper.getStringValue(arrays, TouchInputName::Thumbnail, parameters_.thumbnailUrl_);
+	inputHelper.getBoolValue(arrays, TouchInputName::Pause, parameters_.isPaused_);
+	inputHelper.getBoolValue(arrays, TouchInputName::Loop, parameters_.isLooping_);
+	inputHelper.getBoolValue(arrays, TouchInputName::Blackout, parameters_.blackout_);
+	inputHelper.getBoolValue(arrays, TouchInputName::ThumbnailOn, parameters_.thumbnailOn_);
+	inputHelper.updateFloatValue(arrays, TouchInputName::SeekPosition, parameters_.isNewSeekValue_, parameters_.lastSeekPosition_);
+	inputHelper.updateFloatValue(arrays, TouchInputName::PlaybackSpeed, parameters_.isNewPlaybackSpeed_, parameters_.lastPlaybackSpeed_);
+	inputHelper.updateFloatValue(arrays, TouchInputName::StartTime, parameters_.isNewStartTime_, parameters_.lastStartTimeSec_);
+	inputHelper.updateFloatValue(arrays, TouchInputName::EndTime, parameters_.isNewEndTime_, parameters_.lastEndTimeSec_);
 
 	bool switchOnCue = false;
-	getBoolValue(arrays, TouchInputName::SwitchOnCue, switchOnCue);
+	inputHelper.getBoolValue(arrays, TouchInputName::SwitchOnCue, switchOnCue);
 	parameters_.seamlessModeOn_ = !switchOnCue;
 
 	if (!parameters_.seamlessModeOn_)
-		updateFloatValue(arrays, TouchInputName::SwitchCue, parameters_.switchCue_, parameters_.lastSwitchCueValue_);
+		inputHelper.updateFloatValue(arrays, TouchInputName::SwitchCue, parameters_.switchCue_, parameters_.lastSwitchCueValue_);
 	else
 		parameters_.switchCue_ = 0;
 }
@@ -1019,64 +1078,64 @@ renderTexture(GLuint texId, unsigned width, unsigned height, void* data)
 	glEnd();
 }
 
-bool
-getStringValue(const TOP_InputArrays* arrays, TouchInputName inputName, std::string &value)
-{
-	if (arrays->numStringInputs > TouchInputs[inputName].index_ &&
-		std::string(arrays->stringInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
-	{
-		std::string str = std::string(arrays->stringInputs[TouchInputs[inputName].index_].value);
-		str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
-		str.erase(std::remove(str.begin(), str.end(), '\n'), str.end());
-		value = str;
-		return true;
-	}
-	return false;
-}
-
-bool
-getFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, float &value)
-{
-	if (arrays->numFloatInputs > TouchInputs[inputName].index_ &&
-		std::string(arrays->floatInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
-	{
-		int idx = TouchInputs[inputName].index_;
-		int subIdx = TouchInputs[inputName].subIndex_;
-		value = arrays->floatInputs[idx].values[subIdx];
-		return true;
-	}
-	return false;
-}
-
-bool 
-updateFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &updated, float &value)
-{
-	float newValue = 0;
-	//updated = false;
-
-	if (getFloatValue(arrays, inputName, newValue))
-	{
-		if (value != newValue)
-		{
-			updated = true;
-			value = newValue;
-		}
-
-		return true;
-	}
-	return false;
-}
-
-bool
-getBoolValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &value)
-{
-	if (arrays->numFloatInputs > TouchInputs[inputName].index_ &&
-		std::string(arrays->floatInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
-	{
-		int idx = TouchInputs[inputName].index_;
-		int subIdx = TouchInputs[inputName].subIndex_;
-		value = arrays->floatInputs[idx].values[subIdx] > 0.5;
-		return true;
-	}
-	return false;
-}
+//bool
+//getStringValue(const TOP_InputArrays* arrays, TouchInputName inputName, std::string &value)
+//{
+//	if (arrays->numStringInputs > TouchInputs[inputName].index_ &&
+//		std::string(arrays->stringInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
+//	{
+//		std::string str = std::string(arrays->stringInputs[TouchInputs[inputName].index_].value);
+//		str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
+//		str.erase(std::remove(str.begin(), str.end(), '\n'), str.end());
+//		value = str;
+//		return true;
+//	}
+//	return false;
+//}
+//
+//bool
+//getFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, float &value)
+//{
+//	if (arrays->numFloatInputs > TouchInputs[inputName].index_ &&
+//		std::string(arrays->floatInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
+//	{
+//		int idx = TouchInputs[inputName].index_;
+//		int subIdx = TouchInputs[inputName].subIndex_;
+//		value = arrays->floatInputs[idx].values[subIdx];
+//		return true;
+//	}
+//	return false;
+//}
+//
+//bool 
+//updateFloatValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &updated, float &value)
+//{
+//	float newValue = 0;
+//	//updated = false;
+//
+//	if (getFloatValue(arrays, inputName, newValue))
+//	{
+//		if (value != newValue)
+//		{
+//			updated = true;
+//			value = newValue;
+//		}
+//
+//		return true;
+//	}
+//	return false;
+//}
+//
+//bool
+//getBoolValue(const TOP_InputArrays* arrays, TouchInputName inputName, bool &value)
+//{
+//	if (arrays->numFloatInputs > TouchInputs[inputName].index_ &&
+//		std::string(arrays->floatInputs[TouchInputs[inputName].index_].name) == TouchInputs[inputName].name_)
+//	{
+//		int idx = TouchInputs[inputName].index_;
+//		int subIdx = TouchInputs[inputName].subIndex_;
+//		value = arrays->floatInputs[idx].values[subIdx] > 0.5;
+//		return true;
+//	}
+//	return false;
+//}

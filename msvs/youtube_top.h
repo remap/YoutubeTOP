@@ -23,6 +23,9 @@
 
 #include "TOP_CPlusPlusBase.h"
 #include "stream_controller.h"
+#include "touch_helpers.h"
+
+#define LIB_VERSION "1.1.0"
 
 class YouTubeTOP : public TOP_CPlusPlusBase
 {
@@ -51,6 +54,8 @@ public:
 	const char*			getWarningString();
 	const char*			getErrorString();
 	const char*			getInfoPopupString();
+
+	std::string			getNodeFullPath() const;
 private:
 	typedef enum _Status {
 		None,
@@ -92,12 +97,13 @@ private:
 	// this instance of the class (like its name).
 	const TOP_NodeInfo		*myNodeInfo;
 	
+	std::string libVersion_ = LIB_VERSION;
 	FILE* logFile_;
 	std::mutex frameBufferAcces_, thumbnailBufferAcces_;
 	void* frameData_ = nullptr;
 	void* thumbnailFrameData_ = nullptr;
 	bool isFrameUpdated_;
-	int startTimeSec_, endTimeSec_;
+	int startTimeMs_, endTimeSec_;
 	bool needAdjustStartTimeHandover_, needAdjustStartTimeActive_;
 	bool activeInfoStaled_, handoverInfoStaled_;
 	int cookNextFrames_;

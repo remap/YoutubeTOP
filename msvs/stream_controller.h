@@ -46,6 +46,7 @@ namespace vlc {
 				int64_t totalTime_, currentTime_;
 				double bufferLevel_;
 				size_t frameSize_;
+				double fps_;
 			};
 
 			libvlc_state_t state_;
@@ -63,6 +64,7 @@ namespace vlc {
 		void pause(bool isOn);
 		void stop();
 		void seek(float pos);
+		void seekMs(int64_t timeMs);
 		void setPlaybackSpeed(float speed);
 
 		void setVolume(int volume);
