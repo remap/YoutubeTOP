@@ -76,10 +76,10 @@ private:
 	Status status_;
 	Parameters parameters_;
 	vlc::StreamController::Status::AudioInfo audioInfo_;
-	unsigned bufferSize_, bufferWriterPtr_, bufferReadPtr_;
-	unsigned bufferSampleSize_;
+	unsigned long long bufferWriterPtr_, bufferReadPtr_;
+	unsigned bufferSize_, bufferSampleSize_;
 	//unsigned nWroteBytes_, nReadBytes_;
-	uint16_t* audioBuffer_;
+	int16_t* audioBuffer_;
 	YouTubeTOP* top_;
 	std::mutex bufferAccess_;
 

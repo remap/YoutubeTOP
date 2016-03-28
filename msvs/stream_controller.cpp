@@ -29,6 +29,8 @@ using namespace std;
 static int BufferingLevelMs = 20000;
 
 namespace vlc {
+	StreamController::sample_type StreamController::MaxSampleValue = SHRT_MAX;
+
 	namespace internal {
 		struct StreamControllerPrivate
 		{
@@ -47,7 +49,7 @@ namespace vlc {
 			unsigned char *buffer_ = nullptr;
 
 			unsigned audioBufferSize_ = 0, nAudioSamples_ = 0;
-			uint16_t* audioBuffer_ = nullptr;
+			StreamController::sample_type* audioBuffer_ = nullptr;
 
 			StreamController::OnRendering onRendering_;
 			StreamController::OnAudioData onAudioData_;
@@ -65,24 +67,26 @@ namespace vlc {
 		static chrono::duration<double> lastLogFlush(0);
 		void log(internal::StreamControllerPrivate* c, int level, const char *fmt, ...)
 		{
-			//ScopedLock lock(c->logMutex_);
-			//FILE* outStream = (c->logFile_) ? c->logFile_ : stdout;
-			//chrono::system_clock::time_point now = chrono::system_clock::now();
-			//chrono::duration<double> seconds = now.time_since_epoch();
+#if 1
+			ScopedLock lock(c->logMutex_);
+			FILE* outStream = (c->logFile_) ? c->logFile_ : stdout;
+			chrono::system_clock::time_point now = chrono::system_clock::now();
+			chrono::duration<double> seconds = now.time_since_epoch();
 
-			//va_list args;
-			//va_start(args, fmt);
+			va_list args;
+			va_start(args, fmt);
 
-			//fprintf(outStream, "%f <%s-%x> [%d]\t", seconds, c->name_.c_str(), c, level);
-			//vfprintf(outStream, fmt, args);
-			//va_end(args);
-			//fprintf(outStream, "\n");
+			fprintf(outStream, "%f <%s-%x> [%d]\t", seconds, c->name_.c_str(), c, level);
+			vfprintf(outStream, fmt, args);
+			va_end(args);
+			fprintf(outStream, "\n");
 
-			//if (seconds - lastLogFlush >= chrono::milliseconds(300))
-			//{
-			//	fflush(outStream);
-			//	lastLogFlush = seconds;
-			//}
+			if (seconds - lastLogFlush >= chrono::milliseconds(300))
+			{
+				fflush(outStream);
+				lastLogFlush = seconds;
+			}
+#endif
 		}
 
 		void vlcLogCallback(void *data, int level, const libvlc_log_t *ctx, const char *fmt, va_list args)
@@ -298,13 +302,17 @@ namespace vlc {
 			// copy audio data
 			auto c = reinterpret_cast<internal::StreamControllerPrivate*>(opaque);
 			ScopedLock lock(c->accessMutex_);
-			unsigned bufSize = count * sizeof(uint16_t);
+			count *= c->status_.audioInfo_.channels_;
+			unsigned bufSize = count * sizeof(StreamController::sample_type);
+
+			int64_t delay = libvlc_delay(pts);
+			log(c, LIBVLC_NOTICE, "play samples in %ld", delay);
 
 			if (!c->audioBuffer_ || bufSize > c->audioBufferSize_)
 			{
 				c->nAudioSamples_ = count;
 				c->audioBufferSize_ = bufSize;
-				c->audioBuffer_ = (uint16_t*)realloc(c->audioBuffer_, c->audioBufferSize_);
+				c->audioBuffer_ = (StreamController::sample_type*)realloc(c->audioBuffer_, c->audioBufferSize_);
 			}
 
 			memcpy(c->audioBuffer_, samples, c->audioBufferSize_);

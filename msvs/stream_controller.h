@@ -60,12 +60,15 @@ namespace vlc {
 			std::string warningMessage_, errorMessage_, infoString_;
 		};
 
+		typedef int16_t sample_type;
+		static sample_type MaxSampleValue;
+
 		struct AudioData {
 			AudioData():nSamples_(0), bufferSize_(0), buffer_(nullptr) {}
 			Status::AudioInfo audioInfo_;
 			unsigned nSamples_;
 			unsigned bufferSize_;
-			uint16_t* buffer_;
+			sample_type* buffer_;
 		};
 
 		typedef std::function<void(const void*, const void* userData)> OnRendering;

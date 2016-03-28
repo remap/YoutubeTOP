@@ -24,6 +24,8 @@
 #include <map>
 #include <vector>
 #include <sstream>
+#include <iostream>
+#include <fstream>
 
 #include "youtube_chop.h"
 #include "youtube_top.h"
@@ -31,6 +33,7 @@
 #include "stream_controller.h"
 
 using namespace std::placeholders;
+using namespace vlc;
 
 enum class InfoDatIndex {
 	State,
@@ -48,14 +51,18 @@ enum class InfoChopIndex {
 	ExecuteCount,
 	Samples,
 	SampleRate,
-	nChannels
+	nChannels,
+	WriteCycle,
+	ReadCycle
 };
 
 static std::map<InfoChopIndex, std::string> ChanNames = {
 	{ InfoChopIndex::ExecuteCount, "executeCount" },
 	{ InfoChopIndex::Samples, "nSamples" },	
 	{ InfoChopIndex::SampleRate, "sampleRate" },
-	{ InfoChopIndex::nChannels, "nChannels" }
+	{ InfoChopIndex::nChannels, "nChannels" },
+	{ InfoChopIndex::WriteCycle, "writeCycle" },
+	{ InfoChopIndex::ReadCycle, "readCycle" }
 };
 
 enum class TouchInputName {
@@ -102,6 +109,7 @@ extern "C"
 
 };
 
+static std::ofstream ofs("diff.log", std::ofstream::out);
 
 YouTubeCHOP::YouTubeCHOP(const CHOP_NodeInfo *info) : myNodeInfo(info),
 status_(NotBinded), top_(nullptr), audioBuffer_(nullptr),
@@ -134,8 +142,13 @@ YouTubeCHOP::getOutputInfo(CHOP_OutputInfo *info)
 		info->sampleRate = 44100;
 	else
 	{
-		ScopedLock lock(bufferAccess_);
-		info->sampleRate = audioInfo_.rate_;
+		if (audioInfo_.channels_ != 0)
+		{
+			ScopedLock lock(bufferAccess_);
+			info->sampleRate = audioInfo_.rate_; // / audioInfo_.channels_;
+		}
+		else
+			info->sampleRate = 1;
 	}
 	
 	return true;
@@ -156,18 +169,26 @@ YouTubeCHOP::execute(const CHOP_Output* output,
 	myExecuteCount++;
 
 	unsigned nSamplesPerChannel = output->length;
-	unsigned nSamples = 2*nSamplesPerChannel;
+	unsigned nSamples = audioInfo_.channels_*nSamplesPerChannel;	
 
-	if (bufferWriterPtr_ - bufferReadPtr_ > nSamples*sizeof(uint16_t))
+	for (int j = 0; j < audioInfo_.channels_; j++)
+		memset(output->channels[j], 0, nSamplesPerChannel*sizeof(float));
+
+	if (bufferSize_ > 0)
 	{
-		ScopedLock lock(bufferAccess_);
-
-		for (int i = 0; i < nSamplesPerChannel; i++)
+		if (bufferWriterPtr_ - bufferReadPtr_ >= nSamples*sizeof(StreamController::sample_type))
 		{
-			unsigned sampleIdx = (bufferReadPtr_%bufferSize_) / sizeof(uint16_t);
-			output->channels[0][i] = audioBuffer_[sampleIdx++];
-			output->channels[1][i] = audioBuffer_[sampleIdx];
-			bufferReadPtr_ += 2*sizeof(uint16_t);
+			ScopedLock lock(bufferAccess_);
+
+			for (int i = 0; i < nSamplesPerChannel; i++)
+			{
+				for (int j = 0; j < audioInfo_.channels_; j++)
+				{
+					unsigned sampleIdx = (bufferReadPtr_%bufferSize_) / sizeof(StreamController::sample_type);
+					output->channels[j][i] = ((float)audioBuffer_[sampleIdx] / (float)StreamController::MaxSampleValue);
+					bufferReadPtr_ += sizeof(StreamController::sample_type);
+				}
+			}
 		}
 	}
 }
@@ -201,6 +222,13 @@ YouTubeCHOP::getInfoCHOPChan(int index,
 			break;
 		case InfoChopIndex::nChannels:
 			chan->value = audioInfo_.channels_;
+			break;
+		case InfoChopIndex::WriteCycle:
+			chan->value = (bufferSize_ > 0 ? (bufferWriterPtr_ % bufferSize_)/2 : 0);
+			break;
+		case InfoChopIndex::ReadCycle:
+			chan->value = (bufferSize_ > 0 ? (bufferReadPtr_ % bufferSize_)/2 : 0);
+			break;
 		default:
 			break;
 		}
@@ -260,21 +288,29 @@ void YouTubeCHOP::onAudioData(vlc::StreamController::AudioData ad)
 {
 	ScopedLock lock(bufferAccess_);
 	audioInfo_ = ad.audioInfo_;
-	makeBuffer(ad.audioInfo_.rate_*sizeof(uint16_t));
+	makeBuffer(16*ad.audioInfo_.channels_ * ad.audioInfo_.rate_*sizeof(StreamController::sample_type));
 
 	unsigned writeOffset = bufferWriterPtr_%bufferSize_;
-
+	byte* writePtr = (reinterpret_cast<byte*>(audioBuffer_) + writeOffset);
+	byte* srcPtr = (reinterpret_cast<byte*>(ad.buffer_));
+	
 	// audio buffer is cyclic
 	if (writeOffset + ad.bufferSize_ > bufferSize_)
 	{
 		unsigned excess = (writeOffset + ad.bufferSize_ - bufferSize_);
 		unsigned part1 = ad.bufferSize_ - excess, part2 = excess;
-		memcpy((uint8_t*)audioBuffer_ + writeOffset, ad.buffer_, part1);
-		memcpy((uint8_t*)audioBuffer_, (uint8_t*)ad.buffer_ +part1, part2);
+		memcpy(writePtr, srcPtr, part1);
+
+		writePtr = reinterpret_cast<byte*>(audioBuffer_);
+		memcpy(writePtr, srcPtr+part1, part2);
+
+		ofs << bufferSize_ << ": " << bufferSize_ - writeOffset << " free bytes. writing " << ad.bufferSize_  << std::endl;
+		ofs << writeOffset << " (" << part1 << ") " << "0 " << "(" << part2 << ")" << std::endl;
 	}
 	else
-		memcpy((uint8_t*)audioBuffer_ + writeOffset, ad.buffer_, ad.bufferSize_);
+		memcpy(writePtr, srcPtr, ad.bufferSize_);
 
+	//ofs << bufferWriterPtr_ / bufferSize_ << " " << bufferReadPtr_ / bufferSize_ << std::endl;
 	bufferWriterPtr_ += ad.bufferSize_;
 }
 
@@ -283,8 +319,9 @@ void YouTubeCHOP::makeBuffer(unsigned size)
 	if (bufferSize_ < size || !audioBuffer_)
 	{
 		bufferSize_ = size;
-		audioBuffer_ = (uint16_t*)realloc(audioBuffer_, size);
+		audioBuffer_ = (StreamController::sample_type*)realloc(audioBuffer_, size);
 		bufferWriterPtr_ = 0;
+		bufferReadPtr_ = 0;
 	}
 }
 
