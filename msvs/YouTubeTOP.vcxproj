@@ -127,7 +127,8 @@ copy "$(SolutionDir)..\..\vlc\x64\libgcc_s_seh-1.dll" "$(SolutionDir)x64\$(Confi
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
     </Link>
     <PostBuildEvent>
-      <Command>copy "$(SolutionDir)$(Configuration)\$(TargetFileName)" "C:\sfgs\touch\dlls\" /Y</Command>
+      <Command>copy "$(SolutionDir)$(Configuration)\$(TargetFileName)" "C:\sfgs\touch\dlls\" /Y
+copy "$(SolutionDir)$(Configuration)\$(TargetFileName)" "C:\sandbox\YoutubeTOP\touch\DLLs\" /Y</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
