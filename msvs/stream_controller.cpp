@@ -67,7 +67,7 @@ namespace vlc {
 		static chrono::duration<double> lastLogFlush(0);
 		void log(internal::StreamControllerPrivate* c, int level, const char *fmt, ...)
 		{
-#if 1
+#if 0
 			ScopedLock lock(c->logMutex_);
 			FILE* outStream = (c->logFile_) ? c->logFile_ : stdout;
 			chrono::system_clock::time_point now = chrono::system_clock::now();
@@ -305,9 +305,6 @@ namespace vlc {
 			count *= c->status_.audioInfo_.channels_;
 			unsigned bufSize = count * sizeof(StreamController::sample_type);
 
-			int64_t delay = libvlc_delay(pts);
-			log(c, LIBVLC_NOTICE, "play samples in %ld", delay);
-
 			if (!c->audioBuffer_ || bufSize > c->audioBufferSize_)
 			{
 				c->nAudioSamples_ = count;
@@ -325,6 +322,7 @@ namespace vlc {
 				ad.nSamples_ = c->nAudioSamples_;
 				ad.bufferSize_ = c->audioBufferSize_;
 				ad.buffer_ = c->audioBuffer_;
+				ad.delayUsec_ = libvlc_delay(pts);
 
 				c->onAudioData_(ad, c->userData_);
 			}

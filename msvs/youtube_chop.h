@@ -76,7 +76,7 @@ private:
 	Status status_;
 	Parameters parameters_;
 	vlc::StreamController::Status::AudioInfo audioInfo_;
-	unsigned long long bufferWriterPtr_, bufferReadPtr_;
+	long long bufferWriterPtr_, bufferReadPtr_;
 	unsigned bufferSize_, bufferSampleSize_;
 	//unsigned nWroteBytes_, nReadBytes_;
 	int16_t* audioBuffer_;
@@ -85,7 +85,8 @@ private:
 
 	void onAudioData(vlc::StreamController::AudioData ad);
 
-	void makeBuffer(unsigned size);
+	void makeBuffer(const uint64_t& delay, 
+		const vlc::StreamController::Status::AudioInfo& ai);
 	void freeBuffer();
 
 	void updateParameters(const CHOP_InputArrays* inputArrays);

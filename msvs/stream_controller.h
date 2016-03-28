@@ -68,6 +68,7 @@ namespace vlc {
 			Status::AudioInfo audioInfo_;
 			unsigned nSamples_;
 			unsigned bufferSize_;
+			uint64_t delayUsec_;
 			sample_type* buffer_;
 		};
 

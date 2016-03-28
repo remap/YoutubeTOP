@@ -109,8 +109,6 @@ extern "C"
 
 };
 
-static std::ofstream ofs("diff.log", std::ofstream::out);
-
 YouTubeCHOP::YouTubeCHOP(const CHOP_NodeInfo *info) : myNodeInfo(info),
 status_(NotBinded), top_(nullptr), audioBuffer_(nullptr),
 bufferSize_(0), bufferWriterPtr_(0), bufferReadPtr_(0)
@@ -176,20 +174,25 @@ YouTubeCHOP::execute(const CHOP_Output* output,
 
 	if (bufferSize_ > 0)
 	{
-		if (bufferWriterPtr_ - bufferReadPtr_ >= nSamples*sizeof(StreamController::sample_type))
+		if (bufferReadPtr_ >= 0)
 		{
-			ScopedLock lock(bufferAccess_);
-
-			for (int i = 0; i < nSamplesPerChannel; i++)
+			if (bufferWriterPtr_ - bufferReadPtr_ >= nSamples*sizeof(StreamController::sample_type))
 			{
-				for (int j = 0; j < audioInfo_.channels_; j++)
+				ScopedLock lock(bufferAccess_);
+
+				for (int i = 0; i < nSamplesPerChannel; i++)
 				{
-					unsigned sampleIdx = (bufferReadPtr_%bufferSize_) / sizeof(StreamController::sample_type);
-					output->channels[j][i] = ((float)audioBuffer_[sampleIdx] / (float)StreamController::MaxSampleValue);
-					bufferReadPtr_ += sizeof(StreamController::sample_type);
+					for (int j = 0; j < audioInfo_.channels_; j++)
+					{
+						unsigned sampleIdx = (bufferReadPtr_%bufferSize_) / sizeof(StreamController::sample_type);
+						output->channels[j][i] = ((float)audioBuffer_[sampleIdx] / (float)StreamController::MaxSampleValue);
+						bufferReadPtr_ += sizeof(StreamController::sample_type);
+					}
 				}
 			}
 		}
+		else
+			bufferReadPtr_ += nSamples * sizeof(StreamController::sample_type);
 	}
 }
 
@@ -288,7 +291,7 @@ void YouTubeCHOP::onAudioData(vlc::StreamController::AudioData ad)
 {
 	ScopedLock lock(bufferAccess_);
 	audioInfo_ = ad.audioInfo_;
-	makeBuffer(16*ad.audioInfo_.channels_ * ad.audioInfo_.rate_*sizeof(StreamController::sample_type));
+	makeBuffer(ad.delayUsec_, ad.audioInfo_);
 
 	unsigned writeOffset = bufferWriterPtr_%bufferSize_;
 	byte* writePtr = (reinterpret_cast<byte*>(audioBuffer_) + writeOffset);
@@ -303,25 +306,27 @@ void YouTubeCHOP::onAudioData(vlc::StreamController::AudioData ad)
 
 		writePtr = reinterpret_cast<byte*>(audioBuffer_);
 		memcpy(writePtr, srcPtr+part1, part2);
-
-		ofs << bufferSize_ << ": " << bufferSize_ - writeOffset << " free bytes. writing " << ad.bufferSize_  << std::endl;
-		ofs << writeOffset << " (" << part1 << ") " << "0 " << "(" << part2 << ")" << std::endl;
 	}
 	else
 		memcpy(writePtr, srcPtr, ad.bufferSize_);
 
-	//ofs << bufferWriterPtr_ / bufferSize_ << " " << bufferReadPtr_ / bufferSize_ << std::endl;
 	bufferWriterPtr_ += ad.bufferSize_;
 }
 
-void YouTubeCHOP::makeBuffer(unsigned size)
+void YouTubeCHOP::makeBuffer(const uint64_t& delay,
+	const StreamController::Status::AudioInfo& ai)
 {
-	if (bufferSize_ < size || !audioBuffer_)
+	unsigned int multiple = 2;
+	unsigned int bytesPerSec = ai.channels_ * ai.rate_;
+	int delayInBytes = (int)ceil((double)delay / 1000000 * bytesPerSec);
+	unsigned int bufSizeBytes = multiple * delayInBytes;
+
+	if (bufferSize_ < bufSizeBytes || !audioBuffer_)
 	{
-		bufferSize_ = size;
-		audioBuffer_ = (StreamController::sample_type*)realloc(audioBuffer_, size);
+		bufferSize_ = bufSizeBytes;
+		audioBuffer_ = (StreamController::sample_type*)realloc(audioBuffer_, bufferSize_);
 		bufferWriterPtr_ = 0;
-		bufferReadPtr_ = 0;
+		bufferReadPtr_ = -delayInBytes;
 	}
 }
 
