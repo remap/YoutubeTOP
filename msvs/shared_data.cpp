@@ -56,10 +56,11 @@ void SharedData::removeTop(YouTubeTOP * top)
 
 YouTubeTOP * SharedData::getTop(const std::string & topNodeName)
 {
-	ScopedLock lock(TopAccess);
+#if 1
+//	ScopedLock lock(TopAccess);
 
 	if (TopMap.find(topNodeName) != TopMap.end())
 		return TopMap[topNodeName];
-
+#endif
 	return nullptr;
 }

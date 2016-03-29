@@ -82,6 +82,7 @@ private:
 	int16_t* audioBuffer_;
 	YouTubeTOP* top_;
 	std::mutex bufferAccess_;
+	int64_t lastDelay_;
 
 	void onAudioData(vlc::StreamController::AudioData ad);
 

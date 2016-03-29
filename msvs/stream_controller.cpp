@@ -275,8 +275,8 @@ namespace vlc {
 		int handleAudioFormat(void **opaque, char *format, unsigned *rate,
 			unsigned *channels)
 		{
+#if 1
 			auto c = reinterpret_cast<internal::StreamControllerPrivate*>(*opaque);
-			ScopedLock lock(c->accessMutex_);
 
 			log(c, LIBVLC_DEBUG, "received new audio format info", NULL);
 			if (c->audioBuffer_)
@@ -287,21 +287,24 @@ namespace vlc {
 				c->audioBuffer_ = nullptr;
 			}
 
-			c->status_.audioInfo_.rate_ = *rate;
-			c->status_.audioInfo_.channels_ = *channels;
-			memcpy(c->status_.audioInfo_.format_, format, 4);
-			c->status_.isAudioInfoReady_ = true;
-
+			{
+				ScopedLock lock(c->accessMutex_);
+				c->status_.audioInfo_.rate_ = *rate;
+				c->status_.audioInfo_.channels_ = *channels;
+				memcpy(c->status_.audioInfo_.format_, format, 4);
+				c->status_.isAudioInfoReady_ = true;
+			}
+#endif
 			return 0;
 		}
 
 		void audioPlay(void *opaque, const void *samples, unsigned count, int64_t pts)
 		{
+#if 1
 			if (count == 0) return;
 
 			// copy audio data
 			auto c = reinterpret_cast<internal::StreamControllerPrivate*>(opaque);
-			ScopedLock lock(c->accessMutex_);
 			count *= c->status_.audioInfo_.channels_;
 			unsigned bufSize = count * sizeof(StreamController::sample_type);
 
@@ -326,6 +329,7 @@ namespace vlc {
 
 				c->onAudioData_(ad, c->userData_);
 			}
+#endif
 		}
 	}
 

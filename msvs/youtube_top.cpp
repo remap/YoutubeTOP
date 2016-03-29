@@ -841,6 +841,11 @@ void YouTubeTOP::registerAudioCallback(AudioCallback callback)
 	audioCallback_ = callback;
 }
 
+bool YouTubeTOP::getIsPlaying()
+{
+	return (status_ == Running);
+}
+
 #pragma mark - private
 void
 YouTubeTOP::onFrameRendering(const void* frameData, const void* userData)
@@ -859,6 +864,7 @@ YouTubeTOP::onFrameRendering(const void* frameData, const void* userData)
 
 void YouTubeTOP::onAudioData(const StreamController::AudioData ad, const void * userData)
 {	
+#if 1
 	if (userData == activeController_)
 	{
 		ScopedLock lock(audioCallbackMutex_);
@@ -866,6 +872,7 @@ void YouTubeTOP::onAudioData(const StreamController::AudioData ad, const void * 
 		if (audioCallback_)
 			audioCallback_(ad);
 	}
+#endif
 }
 
 void 

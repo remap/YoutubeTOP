@@ -60,6 +60,8 @@ public:
 	std::string			getNodeFullPath() const;
 	void				registerAudioCallback(AudioCallback callback);
 
+	bool				getIsPlaying();
+
 private:
 	typedef enum _Status {
 		None,
